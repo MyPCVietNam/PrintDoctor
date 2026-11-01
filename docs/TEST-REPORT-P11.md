@@ -1,31 +1,32 @@
-# TEST-REPORT — P1.1
+# TEST-REPORT — P1.1 HF1
 
 ## Gates
 
 | Gate | Result |
 |------|--------|
-| UNIT_PASS | PASS (59 unit tests) |
-| INTEGRATION_PASS | PASS (4 safe integration tests) |
-| WINDOWS_CI_PASS | PENDING (await GitHub Actions on `fix/p11-diagnostic-accuracy-safe-repair`) |
-| WIN10_LAB_NOT_RUN | NOT_RUN / BLOCKED (no Win10 lab in this agent) |
+| UNIT_PASS | PASS (76 unit tests incl. HF1 suite) |
+| INTEGRATION_PASS | PASS (4) |
+| WINDOWS_CI_PASS | PENDING (await Actions on PR #2 head) |
+| WIN10_LAB_NOT_RUN | NOT_RUN / BLOCKED |
 | WIN11_LAB_NOT_RUN | NOT_RUN / BLOCKED |
 | PHYSICAL_LAN_NOT_RUN | NOT_RUN / BLOCKED |
 | PHYSICAL_PRINT_NOT_RUN | NOT_RUN / BLOCKED |
 
-## Local execution (Cloud Linux agent)
+## HF1 mandatory regressions
 
-```text
-dotnet test MyPC.LanPrintDoctor.sln -c Debug
-  UnitTests:        59 passed
-  IntegrationTests:  4 passed
-```
+1. Public firewall rule unchanged  
+2. Rollback restores profile/scope  
+3. PS failure ≠ PASS  
+4. Wrong-scope verify FAIL  
+5. Unknown probes ≠ LAN-001  
+6. Client ≠ server firewall repair  
+7. ApplyStarted crash → UNCERTAIN_STATE  
+8. Separate TransactionIds  
+9. Redacted ZIP no IP/MAC leak  
+10. Missing SchemaVersion rejected  
+11. Foreign ShaPrint PID not counted  
+12. No fake RELEASE ZIP  
 
-## Regression coverage (P11RegressionTests)
+## Non-claims
 
-- Fake-success / NOT_IMPLEMENTED / FPS≠ICMP / rollback honesty / journal recovery
-- UNC NotTested / AuthDenied; ShaPrint listen / not listen / not installed
-- Sharing Fail / Unknown; Compare empty.All; Compare ZIP/JSON import; redaction
-
-## Explicit non-claims
-
-This report does **not** claim FIELD READY, PRODUCTION READY, or verified physical LAN/printer/ShaPrint outage reproduction.
+Not FIELD READY / PRODUCTION READY.

@@ -1,4 +1,21 @@
-# DEFECT-FIX-MATRIX — P1.1 Diagnostic Accuracy & Safe Repair
+# DEFECT-FIX-MATRIX — P1.1 + HF1
+
+Baseline: PR #1 merged commit `1647875`. Branch: `fix/p11-diagnostic-accuracy-safe-repair` (PR #2).
+HF1 audit HEAD: `6c753e1`.
+
+## HF1 defects
+
+| Defect ID | Severity | Status | Root cause | File/function | Before | After | Test ID | Test result | Remaining risk |
+|-----------|----------|--------|------------|---------------|--------|-------|---------|-------------|----------------|
+| HF1-B01 | BLOCKER | FIXED | Group enable widened Public/Domain; enable-before-scope | `PowerShellWindowsInspectors.Enable*`, `FirewallRuleScope`, `*Repair.VerifyAsync` | Group enable / Enabled-only verify | Per-rule Private+LocalSubnet before Enable; strict Verify; skip GPO | HF1_01, HF1_04 | UNIT_PASS | Live Win firewall SKU variance |
+| HF1-B02 | BLOCKER | FIXED | Rollback trusted PS OK; no TransactionId; Apply not durable pre-mutation | `RepairJournal`, `RepairExecutor`, `Restore*FromBackupAsync` | False RollbackVerified | Re-read compare; ApplyStarted; UNCERTAIN_STATE; tx id | HF1_02, HF1_07, HF1_08 | UNIT_PASS | Manual operator resume UI |
+| HF1-H03 | HIGH | FIXED | `!p.Success` treated Unknown as Fail | `DecisionEngine.EvaluateNetwork` | False LAN-001 | Decisive Pass/Fail only | HF1_05* | UNIT_PASS | — |
+| HF1-H04 | HIGH | FIXED | Client repaired server ICMP inbound | `Finding.RepairOwner`, `RepairExecutor`, `MainViewModel` | Local FW-ICMP on client | SERVER_ACTION_REQUIRED | HF1_06 | UNIT_PASS | No remote admin by design |
+| HF1-H05 | HIGH | FIXED | Partial redaction / ACL skip | `ReportExporter` | IP/MAC leaks | Stable tokens all files; ACL on ZIP | HF1_09 | UNIT_PASS | Token compare limits noted |
+| HF1-H06 | HIGH | FIXED | Guest from server cfg; foreign PID; weak schema | SMB/ShaPrint collectors, `ReportCompareService` | Mis-attribution | Client guest cfg; PID filter; schema/size checks | HF1_10, HF1_11 | UNIT_PASS | Lab PID name variants |
+| HF1-H07 | HIGH | FIXED | Fake RELEASE ZIP on publish fail | `package-p11-artifacts.sh` | Misleading zip | RELEASE_BLOCKED only | HF1_12 | UNIT_PASS | Authoritative RELEASE from Windows CI |
+
+## P1.1 defects (prior)
 
 Baseline: PR #1 merged commit `1647875`. Branch: `fix/p11-diagnostic-accuracy-safe-repair`.
 
