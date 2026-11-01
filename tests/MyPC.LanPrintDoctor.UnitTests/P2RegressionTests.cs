@@ -186,33 +186,42 @@ public class P2RegressionTests
     [Fact]
     public async Task P2_02_OwnedFirewall_CreateDisabledThenEnable_ScriptOrder()
     {
-        string? captured = null;
+        var scripts = new List<string>();
+        var state = new FwSimState();
         var runner = new RecordingRunner((_, script) =>
         {
-            captured = script;
-            return new ProcessResult { ExitCode = 0, StdOut = "CHANGED:MyPC.PrintDoctor.ICMPv4.Private" };
+            scripts.Add(script);
+            return FwSim.Handle(script, state, OwnedFirewallSpec.IcmpEchoPrivateLocalSubnet());
         });
         var elev = new StubElevation { Admin = true };
         var op = new OwnedFirewallRuleRepair(runner, elev, OwnedFirewallSpec.IcmpEchoPrivateLocalSubnet());
+        op.BindTransaction("ordertx");
         var prereq = await op.CheckPrerequisitesAsync();
         Assert.True(prereq.CanProceed);
         await op.ApplyAsync();
-        Assert.NotNull(captured);
-        Assert.Contains("-Enabled False", captured, StringComparison.OrdinalIgnoreCase);
-        var createIdx = captured!.IndexOf("New-NetFirewallRule", StringComparison.OrdinalIgnoreCase);
-        var enableIdx = captured.IndexOf("Enable-NetFirewallRule", StringComparison.OrdinalIgnoreCase);
-        Assert.True(createIdx >= 0 && enableIdx > createIdx);
-        Assert.Contains("CREATED_ENABLED_TOO_EARLY", captured, StringComparison.Ordinal);
-        Assert.DoesNotContain("48632", captured, StringComparison.Ordinal);
+        var createScript = scripts.First(s => s.Contains("New-NetFirewallRule", StringComparison.OrdinalIgnoreCase));
+        var enableScript = scripts.First(s => s.Contains("Enable-NetFirewallRule", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("-Enabled False", createScript, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Enable-NetFirewallRule", createScript, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CREATED_ENABLED_TOO_EARLY", createScript, StringComparison.Ordinal);
+        Assert.True(scripts.IndexOf(createScript) < scripts.IndexOf(enableScript));
+        Assert.DoesNotContain(scripts, s => s.Contains("48632", StringComparison.Ordinal));
     }
 
     [Fact]
     public async Task P2_02_OwnedFirewall_RefuseDeleteNonOwned()
     {
+        // Without a create in this transaction, rollback must refuse delete (no Remove script).
+        var removeCalled = false;
         var runner = new RecordingRunner((_, script) =>
         {
-            Assert.Contains("REFUSE_DELETE_NON_OWNED", script, StringComparison.Ordinal);
-            return new ProcessResult { ExitCode = 0, StdOut = "OK:REMOVED" };
+            if (script.Contains("Remove-NetFirewallRule", StringComparison.Ordinal))
+            {
+                removeCalled = true;
+                return new ProcessResult { ExitCode = 0, StdOut = "OK:REMOVED" };
+            }
+
+            return new ProcessResult { ExitCode = 0, StdOut = """{"exists":false}""" };
         });
         var op = new OwnedFirewallRuleRepair(runner, new StubElevation { Admin = true }, OwnedFirewallSpec.Smb445PrivateLocalSubnet());
         var rb = await op.RollbackAsync(new RepairBackup
@@ -220,9 +229,10 @@ public class P2RegressionTests
             BackupId = "b",
             Path = "journal",
             CreatedAt = DateTimeOffset.UtcNow,
-            PayloadJson = "null"
+            PayloadJson = """{"exists":false}"""
         });
         Assert.True(rb.Succeeded);
+        Assert.False(removeCalled);
     }
 
     private sealed class StubElevation : IElevationService

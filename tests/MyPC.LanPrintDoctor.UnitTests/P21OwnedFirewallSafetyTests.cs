@@ -20,7 +20,6 @@ public class P21OwnedFirewallSafetyTests
                 && script.Contains("Get-NetFirewallRule", StringComparison.Ordinal)
                 && script.Contains("ConvertTo-Json", StringComparison.Ordinal))
             {
-                // Backup / read: preexisting valid-ish rule
                 return new ProcessResult
                 {
                     ExitCode = 0,
@@ -72,45 +71,22 @@ public class P21OwnedFirewallSafetyTests
             .ExecuteAsync(op, userConfirmed: true, localRole: MachineRole.Server);
 
         Assert.Equal(DiagnosticStatus.Blocked, result.Status);
-        Assert.Contains("RULE_EXISTS_MISMATCH", result.Message ?? "", StringComparison.Ordinal);
+        Assert.Contains("RULE_CONFLICT", result.Message ?? "", StringComparison.Ordinal);
         Assert.False(removed);
-        Assert.False(result.RollbackAttempted); // Rollback may be called but Attempted=false for no-create
+        Assert.False(result.RollbackAttempted);
     }
 
     [Fact]
     public async Task P21_001_CreateThenRollback_OnlyDeletesWhenCreated()
     {
-        var created = false;
-        var runner = new ScriptRunner((_, script) =>
-        {
-            if (script.Contains("ConvertTo-Json", StringComparison.Ordinal) && script.Contains("exists", StringComparison.OrdinalIgnoreCase))
-            {
-                return new ProcessResult
-                {
-                    ExitCode = 0,
-                    StdOut = created
-                        ? """{"exists":true,"Name":"MyPC.PrintDoctor.SMB445.Private","Enabled":true,"Direction":"Inbound","Action":"Allow","Profile":"Private","Protocol":"TCP","LocalPort":"445","RemoteAddress":"LocalSubnet","PolicyStore":"PersistentStore","Description":"tx:"}"""
-                        : """{"exists":false}"""
-                };
-            }
-            if (script.Contains("New-NetFirewallRule", StringComparison.Ordinal))
-            {
-                created = true;
-                return new ProcessResult { ExitCode = 0, StdOut = "CHANGED:MyPC.PrintDoctor.SMB445.Private|FINGERPRINT:tx:abc" };
-            }
-            if (script.Contains("Remove-NetFirewallRule", StringComparison.Ordinal))
-            {
-                Assert.Contains("PROVENANCE", script, StringComparison.Ordinal);
-                return new ProcessResult { ExitCode = 0, StdOut = "OK:REMOVED" };
-            }
-            return new ProcessResult { ExitCode = 0, StdOut = "PASS" };
-        });
+        var state = new FwSimState();
+        var runner = new ScriptRunner((_, script) => FwSim.Handle(script, state, OwnedFirewallSpec.Smb445PrivateLocalSubnet()));
 
         var op = new OwnedFirewallRuleRepair(runner, new Elev { Admin = true }, OwnedFirewallSpec.Smb445PrivateLocalSubnet());
+        op.BindTransaction("abc");
         await op.BackupAsync();
         await op.ApplyAsync();
         Assert.True(op.CreatedInThisTransaction);
-        // Force verify fail path via direct rollback
         var rb = await op.RollbackAsync(new RepairBackup
         {
             BackupId = "b",
@@ -119,6 +95,8 @@ public class P21OwnedFirewallSafetyTests
             PayloadJson = """{"exists":false}"""
         });
         Assert.True(rb.Attempted);
+        Assert.True(rb.Verified);
+        Assert.True(state.Removed);
     }
 
     [Fact]
@@ -165,5 +143,77 @@ public class P21OwnedFirewallSafetyTests
         public ScriptRunner(Func<string, string, ProcessResult> h) => _h = h;
         public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan? timeout = null, CancellationToken ct = default)
             => Task.FromResult(_h(fileName, arguments.LastOrDefault() ?? ""));
+    }
+}
+
+/// <summary>Shared mutable firewall simulation state for multi-step create/enable/rollback tests.</summary>
+internal sealed class FwSimState
+{
+    public bool Created;
+    public bool Enabled;
+    public string? Fingerprint;
+    public bool Removed;
+}
+
+internal static class FwSim
+{
+    public static ProcessResult Handle(string script, FwSimState state, OwnedFirewallSpec spec)
+    {
+        if (script.Contains("ConvertTo-Json", StringComparison.Ordinal) && script.Contains("exists", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!state.Created || state.Removed)
+                return new ProcessResult { ExitCode = 0, StdOut = """{"exists":false}""" };
+            var en = state.Enabled ? "true" : "false";
+            var isIcmp = spec.Protocol.Contains("ICMP", StringComparison.OrdinalIgnoreCase);
+            if (isIcmp)
+            {
+                return new ProcessResult
+                {
+                    ExitCode = 0,
+                    StdOut =
+                        $"{{\"exists\":true,\"Name\":\"{spec.RuleName}\",\"Enabled\":{en},\"Direction\":\"Inbound\",\"Action\":\"Allow\",\"Profile\":\"Private\",\"Protocol\":\"{spec.Protocol}\",\"LocalPort\":null,\"IcmpType\":\"{spec.LocalPortOrIcmp}\",\"RemoteAddress\":\"{spec.RemoteAddress}\",\"PolicyStore\":\"PersistentStore\",\"Description\":\"{state.Fingerprint}\"}}"
+                };
+            }
+
+            return new ProcessResult
+            {
+                ExitCode = 0,
+                StdOut =
+                    $"{{\"exists\":true,\"Name\":\"{spec.RuleName}\",\"Enabled\":{en},\"Direction\":\"Inbound\",\"Action\":\"Allow\",\"Profile\":\"Private\",\"Protocol\":\"{spec.Protocol}\",\"LocalPort\":\"{spec.LocalPortOrIcmp}\",\"IcmpType\":null,\"RemoteAddress\":\"{spec.RemoteAddress}\",\"PolicyStore\":\"PersistentStore\",\"Description\":\"{state.Fingerprint}\"}}"
+            };
+        }
+
+        if (script.Contains("New-NetFirewallRule", StringComparison.Ordinal))
+        {
+            state.Created = true;
+            state.Enabled = false;
+            state.Removed = false;
+            var idx = script.IndexOf("-Description '", StringComparison.Ordinal);
+            if (idx >= 0)
+            {
+                var start = idx + "-Description '".Length;
+                var end = script.IndexOf('\'', start);
+                state.Fingerprint = script[start..end];
+            }
+
+            return new ProcessResult { ExitCode = 0, StdOut = "CREATED:" + spec.RuleName + "|FINGERPRINT:" + state.Fingerprint };
+        }
+
+        if (script.Contains("Enable-NetFirewallRule", StringComparison.Ordinal))
+        {
+            state.Enabled = true;
+            return new ProcessResult { ExitCode = 0, StdOut = "ENABLED:" + spec.RuleName };
+        }
+
+        if (script.Contains("Remove-NetFirewallRule", StringComparison.Ordinal))
+        {
+            Assert.Contains("PROVENANCE", script, StringComparison.Ordinal);
+            state.Removed = true;
+            state.Created = false;
+            state.Enabled = false;
+            return new ProcessResult { ExitCode = 0, StdOut = "OK:REMOVED" };
+        }
+
+        return new ProcessResult { ExitCode = 0, StdOut = "OK" };
     }
 }

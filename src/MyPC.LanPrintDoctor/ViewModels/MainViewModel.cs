@@ -383,6 +383,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             var journalDir = Path.Combine(journalsRoot, _lastSnapshot.SessionId);
             _lastJournal = new RepairJournal(journalDir);
+            // Recovery is re-checked inside RepairExecutor AFTER the machine-wide lock is held.
+            // Early UX hint only — executor is authoritative and uses lockDirectory=null (ProgramData).
             if (_lastJournal.GetRecoveryState() is RepairRecoveryState.UncertainState
                 or RepairRecoveryState.Incomplete
                 or RepairRecoveryState.CorruptJournal)
@@ -393,7 +395,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 MessageBox.Show(StatusText, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            var executor = new RepairExecutor(_lastJournal);
+            var executor = new RepairExecutor(_lastJournal, lockDirectory: null, journalsRoot: journalsRoot);
             var before = await op.PreviewChangesAsync();
             var result = await executor.ExecuteAsync(op, userConfirmed: true, ct: default, localRole: _lastSnapshot.Role, findingOwner: pick.RepairOwner);
 

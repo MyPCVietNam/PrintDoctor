@@ -7,11 +7,18 @@ public sealed class RepairExecutor
 {
     private readonly RepairJournal _journal;
     private readonly string? _lockDirectory;
+    private readonly string? _journalsRoot;
 
-    public RepairExecutor(RepairJournal journal, string? lockDirectory = null)
+    /// <param name="lockDirectory">
+    /// Null = machine-wide ProgramData lock (production). Pass an isolated temp directory only in unit tests.
+    /// Never pass a per-session journal path in production — that defeats cross-session exclusion.
+    /// </param>
+    /// <param name="journalsRoot">Optional root to scan all session journals while holding the lock.</param>
+    public RepairExecutor(RepairJournal journal, string? lockDirectory = null, string? journalsRoot = null)
     {
         _journal = journal;
         _lockDirectory = lockDirectory;
+        _journalsRoot = journalsRoot;
     }
 
     public async Task<RepairResult> ExecuteAsync(
@@ -23,9 +30,32 @@ public sealed class RepairExecutor
     {
         var tx = Guid.NewGuid().ToString("N");
 
-        // Prior unfinished / corrupt journal — BLOCK immediately (engine-level; UI-independent).
-        // Never warn-and-continue into Apply.
+        // P22-003: Acquire machine-wide lock BEFORE any recovery / journal inspection.
+        using var machineLock = new MachineRepairLock(_lockDirectory);
+        if (!machineLock.TryAcquire(TimeSpan.FromMilliseconds(200)))
+        {
+            return new RepairResult
+            {
+                OperationId = operation.OperationId,
+                TransactionId = tx,
+                Applied = false,
+                Verified = false,
+                Status = DiagnosticStatus.Blocked,
+                Message = "CONCURRENT_REPAIR_BLOCKED: another repair holds the machine lock."
+            };
+        }
+
+        // All incomplete-transaction detection operates while holding the lock.
         var recovery = _journal.GetRecoveryState();
+        if (!string.IsNullOrWhiteSpace(_journalsRoot))
+        {
+            var cross = RepairJournal.ScanAllSessions(_journalsRoot);
+            if (cross is RepairRecoveryState.UncertainState
+                or RepairRecoveryState.Incomplete
+                or RepairRecoveryState.CorruptJournal)
+                recovery = cross;
+        }
+
         if (recovery is RepairRecoveryState.UncertainState
             or RepairRecoveryState.Incomplete
             or RepairRecoveryState.CorruptJournal)
@@ -53,24 +83,15 @@ public sealed class RepairExecutor
                 TransactionId = tx,
                 Applied = false,
                 Verified = false,
+                UncertainState = code == "UNCERTAIN_STATE",
                 Status = DiagnosticStatus.Blocked,
                 Message = $"{code}: prior repair journal requires technician review; Apply blocked (no auto-rollback)."
             };
         }
 
-        using var machineLock = new MachineRepairLock(_lockDirectory ?? _journal.DirectoryPath);
-        if (!machineLock.TryAcquire(TimeSpan.FromMilliseconds(200)))
-        {
-            return new RepairResult
-            {
-                OperationId = operation.OperationId,
-                TransactionId = tx,
-                Applied = false,
-                Verified = false,
-                Status = DiagnosticStatus.Blocked,
-                Message = "CONCURRENT_REPAIR_BLOCKED: another repair holds the machine lock."
-            };
-        }
+        // P22-001: shared TransactionId bound into the operation before any mutation.
+        if (operation is ITransactionBoundRepair bound)
+            bound.BindTransaction(tx);
 
         if (findingOwner == RepairOwnerRole.ServerActionRequired
             || operation.OwnerRole == RepairOwnerRole.ServerActionRequired
@@ -200,6 +221,7 @@ public sealed class RepairExecutor
                     RolledBack = rb.Succeeded && rb.Verified && !rb.Partial,
                     RollbackVerified = rb.Verified && !rb.Partial,
                     RollbackUnsupported = rb.Unsupported || !operation.SupportsRollback,
+                    UncertainState = rb.Partial || (rb.Attempted && !rb.Verified) || IsUncertainMessage(rb.Message),
                     Status = DiagnosticStatus.Fail,
                     Message = BuildFailMessage("Repair applied but verification failed.", rb, operation.SupportsRollback)
                         + (rb.Partial ? " PARTIAL_ROLLBACK." : "")
@@ -237,7 +259,7 @@ public sealed class RepairExecutor
         }
         catch (RepairBlockedException bx)
         {
-            // P21-001: RULE_EXISTS / mismatch — never destructive rollback of preexisting.
+            // P22-001: RULE_CONFLICT / mismatch — never destructive rollback of preexisting.
             _journal.Record(tx, operation.OperationId, "Blocked", false, bx.Message);
             if (backup is not null)
             {
@@ -252,6 +274,7 @@ public sealed class RepairExecutor
                     RollbackAttempted = rb.Attempted,
                     RolledBack = rb.Succeeded && rb.Verified && rb.Attempted,
                     RollbackVerified = rb.Verified,
+                    UncertainState = IsUncertainMessage(bx.Message) || IsUncertainMessage(rb.Message),
                     Status = DiagnosticStatus.Blocked,
                     Message = bx.Message + (rb.Attempted ? "" : " (no preexisting objects deleted)")
                 };
@@ -263,6 +286,7 @@ public sealed class RepairExecutor
                 TransactionId = tx,
                 Applied = false,
                 Verified = false,
+                UncertainState = IsUncertainMessage(bx.Message),
                 Status = DiagnosticStatus.Blocked,
                 Message = bx.Message
             };
@@ -273,6 +297,8 @@ public sealed class RepairExecutor
             if (backup is not null)
             {
                 var rb = await SafeRollbackAsync(tx, operation, backup, operation.SupportsRollback);
+                var uncertain = IsUncertainMessage(ex.Message) || IsUncertainMessage(rb.Message) || rb.Partial
+                                || (rb.Attempted && !rb.Verified);
                 return new RepairResult
                 {
                     OperationId = operation.OperationId,
@@ -282,9 +308,10 @@ public sealed class RepairExecutor
                     BackupId = backup.BackupId,
                     RollbackAttempted = rb.Attempted,
                     RolledBack = rb.Succeeded && rb.Verified,
-                    RollbackVerified = rb.Verified,
+                    RollbackVerified = rb.Verified && !rb.Partial,
                     RollbackUnsupported = rb.Unsupported || !operation.SupportsRollback,
-                    Status = DiagnosticStatus.Fail,
+                    UncertainState = uncertain,
+                    Status = uncertain && !rb.Verified ? DiagnosticStatus.Fail : DiagnosticStatus.Fail,
                     Message = BuildFailMessage($"Repair failed: {ex.Message}.", rb, operation.SupportsRollback)
                 };
             }
@@ -295,11 +322,15 @@ public sealed class RepairExecutor
                 TransactionId = tx,
                 Applied = false,
                 Verified = false,
+                UncertainState = IsUncertainMessage(ex.Message),
                 Status = DiagnosticStatus.Fail,
                 Message = ex.Message
             };
         }
     }
+
+    private static bool IsUncertainMessage(string? m)
+        => m is not null && m.Contains("UNCERTAIN", StringComparison.OrdinalIgnoreCase);
 
     private static bool OwnerAllows(RepairOwnerRole owner, MachineRole local) => owner switch
     {

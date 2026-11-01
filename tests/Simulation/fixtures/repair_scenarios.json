@@ -427,7 +427,7 @@
       "is_admin": true,
       "policy": "ALLOW",
       "profile": "Private",
-      "scope": "SPECIFIC_CIDR",
+      "scope": "192.168.10.0/24",
       "kind": "SMB",
       "client_probe_pass": true
     },
