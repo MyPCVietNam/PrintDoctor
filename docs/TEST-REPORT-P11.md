@@ -4,7 +4,7 @@
 |------|--------|
 | UNIT_PASS | PASS (94) |
 | INTEGRATION_PASS | PASS (9; no firewall mutation in CI) |
-| WINDOWS_CI_PASS | PENDING this push |
+| WINDOWS_CI_PASS | PASS — https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41313515087 |
 | WIN10_LAB_NOT_RUN | BLOCKED |
 | WIN11_LAB_NOT_RUN | BLOCKED |
 | PHYSICAL_LAN_NOT_RUN | BLOCKED |
