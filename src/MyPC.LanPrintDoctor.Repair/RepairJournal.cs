@@ -19,13 +19,16 @@ public enum RepairRecoveryState
     Clean,
     Incomplete,
     /// <summary>Mutation recorded without verified completion — technician must review.</summary>
-    UncertainState
+    UncertainState,
+    /// <summary>Journal JSON unreadable / corrupt — treat as BLOCKED, never Clean.</summary>
+    CorruptJournal
 }
 
 /// <summary>
 /// Durable per-transaction journal. Scans can span session directories.
 /// Phases: ApplyStarted → Applied → Verify | RollbackStarted → RollbackVerified.
-/// Applied without Verify ⇒ UNCERTAIN_STATE (never Clean).
+/// Terminal success requires Phase AND Success=true. Verify=false / RollbackVerified=false ⇒ UNCERTAIN.
+/// Corrupt journal ⇒ CORRUPT_JOURNAL (never Clean).
 /// </summary>
 public sealed class RepairJournal
 {
@@ -43,9 +46,14 @@ public sealed class RepairJournal
 
     public string DirectoryPath => _directory;
     public IReadOnlyList<RepairJournalEntry> Entries => _entries;
+    public bool IsCorrupt { get; private set; }
+    public string? CorruptDetail { get; private set; }
 
     public void Record(string transactionId, string operationId, string phase, bool success, string? detail = null, string? backupId = null, string? backupPayload = null)
     {
+        if (IsCorrupt)
+            throw new InvalidOperationException("CORRUPT_JOURNAL: refusing to append — technician must quarantine/replace journal.");
+
         _entries.Add(new RepairJournalEntry
         {
             TransactionId = transactionId,
@@ -64,10 +72,11 @@ public sealed class RepairJournal
 
     public IReadOnlyList<RepairJournalEntry> LoadIncomplete()
     {
+        if (IsCorrupt) return Array.Empty<RepairJournalEntry>();
         var incomplete = new List<RepairJournalEntry>();
         foreach (var group in _entries.GroupBy(e => e.TransactionId))
         {
-            if (IsUncertain(group.Select(g => g.Phase).ToHashSet(StringComparer.OrdinalIgnoreCase)))
+            if (IsUncertain(group.ToList()) || IsIncomplete(group.ToList()))
                 incomplete.Add(group.Last());
         }
         return incomplete;
@@ -75,6 +84,8 @@ public sealed class RepairJournal
 
     public RepairRecoveryState GetRecoveryState(string? transactionId = null)
     {
+        if (IsCorrupt) return RepairRecoveryState.CorruptJournal;
+
         IEnumerable<IGrouping<string, RepairJournalEntry>> groups = transactionId is null
             ? _entries.GroupBy(e => e.TransactionId)
             : _entries.Where(e => e.TransactionId == transactionId).GroupBy(e => e.TransactionId);
@@ -83,9 +94,9 @@ public sealed class RepairJournal
         var anyIncomplete = false;
         foreach (var group in groups)
         {
-            var phases = group.Select(g => g.Phase).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (IsUncertain(phases)) anyUncertain = true;
-            else if (IsIncomplete(phases)) anyIncomplete = true;
+            var list = group.ToList();
+            if (IsUncertain(list)) anyUncertain = true;
+            else if (IsIncomplete(list)) anyIncomplete = true;
         }
 
         if (anyUncertain) return RepairRecoveryState.UncertainState;
@@ -93,28 +104,25 @@ public sealed class RepairJournal
         return RepairRecoveryState.Clean;
     }
 
-    /// <summary>Scan Journals root for unfinished transactions across prior sessions.</summary>
+    /// <summary>Scan Journals root for unfinished / corrupt transactions across prior sessions.</summary>
     public static RepairRecoveryState ScanAllSessions(string journalsRoot)
     {
         if (!Directory.Exists(journalsRoot)) return RepairRecoveryState.Clean;
+        var anyCorrupt = false;
         var anyUncertain = false;
         var anyIncomplete = false;
-        foreach (var dir in Directory.EnumerateDirectories(journalsRoot))
-        {
-            var j = new RepairJournal(dir);
-            var st = j.GetRecoveryState();
-            if (st == RepairRecoveryState.UncertainState) anyUncertain = true;
-            else if (st == RepairRecoveryState.Incomplete) anyIncomplete = true;
-        }
-        // Also scan loose journal files
+
         foreach (var file in Directory.EnumerateFiles(journalsRoot, "repair-journal.json", SearchOption.AllDirectories))
         {
             var j = new RepairJournal(Path.GetDirectoryName(file)!);
             var st = j.GetRecoveryState();
-            if (st == RepairRecoveryState.UncertainState) anyUncertain = true;
+            if (st == RepairRecoveryState.CorruptJournal) anyCorrupt = true;
+            else if (st == RepairRecoveryState.UncertainState) anyUncertain = true;
             else if (st == RepairRecoveryState.Incomplete) anyIncomplete = true;
         }
 
+        // Empty session dirs without a journal file are ignored.
+        if (anyCorrupt) return RepairRecoveryState.CorruptJournal;
         if (anyUncertain) return RepairRecoveryState.UncertainState;
         if (anyIncomplete) return RepairRecoveryState.Incomplete;
         return RepairRecoveryState.Clean;
@@ -128,8 +136,13 @@ public sealed class RepairJournal
         {
             var dir = Path.GetDirectoryName(file)!;
             var j = new RepairJournal(dir);
+            if (j.IsCorrupt)
+            {
+                list.Add((dir, "", "", "CORRUPT_JOURNAL: " + (j.CorruptDetail ?? "unreadable")));
+                continue;
+            }
             foreach (var e in j.LoadIncomplete())
-                list.Add((dir, e.TransactionId, e.OperationId, e.Phase + ": " + (e.Detail ?? "")));
+                list.Add((dir, e.TransactionId, e.OperationId, e.Phase + "(Success=" + e.Success + "): " + (e.Detail ?? "")));
         }
         return list;
     }
@@ -141,10 +154,39 @@ public sealed class RepairJournal
         if (!File.Exists(path)) return;
         try
         {
-            var loaded = JsonSerializer.Deserialize<List<RepairJournalEntry>>(File.ReadAllText(path));
-            if (loaded is not null) _entries.AddRange(loaded);
+            var text = File.ReadAllText(path);
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                // Empty file is not a valid journal of completed work — treat as corrupt if non-empty path existed with junk.
+                return;
+            }
+
+            var loaded = JsonSerializer.Deserialize<List<RepairJournalEntry>>(text);
+            if (loaded is null)
+            {
+                IsCorrupt = true;
+                CorruptDetail = "Deserialize returned null";
+                return;
+            }
+
+            // Required fields missing ⇒ corrupt
+            if (loaded.Any(e => string.IsNullOrWhiteSpace(e.TransactionId)
+                                || string.IsNullOrWhiteSpace(e.OperationId)
+                                || string.IsNullOrWhiteSpace(e.Phase)))
+            {
+                IsCorrupt = true;
+                CorruptDetail = "Journal entries missing required fields";
+                return;
+            }
+
+            _entries.AddRange(loaded);
         }
-        catch { /* keep empty */ }
+        catch (Exception ex)
+        {
+            IsCorrupt = true;
+            CorruptDetail = ex.Message;
+            _entries.Clear();
+        }
     }
 
     private void Persist()
@@ -156,28 +198,56 @@ public sealed class RepairJournal
     }
 
     /// <summary>
-    /// Mutation started or applied without Verify and without completed rollback ⇒ uncertain.
+    /// Evaluates Phase AND Success. Verify=false / RollbackVerified=false never count as completed.
     /// Does NOT auto-rollback.
     /// </summary>
-    internal static bool IsUncertain(HashSet<string> phases)
+    internal static bool IsUncertain(IReadOnlyList<RepairJournalEntry> entries)
     {
-        var terminalOk = phases.Contains("Verify") || phases.Contains("RollbackVerified");
-        if (terminalOk) return false;
-        // ApplyStarted without Applied (crash mid-mutation)
-        if (phases.Contains("ApplyStarted") && !phases.Contains("Applied") && !phases.Contains("RollbackStarted"))
+        if (entries.Count == 0) return false;
+
+        var verifyOk = entries.Any(e => PhaseEq(e, "Verify") && e.Success);
+        var rollbackOk = entries.Any(e => PhaseEq(e, "RollbackVerified") && e.Success);
+        if (verifyOk || rollbackOk) return false;
+
+        // Explicit failed terminals without successful recovery
+        if (entries.Any(e => PhaseEq(e, "Verify") && !e.Success)) return true;
+        if (entries.Any(e => PhaseEq(e, "RollbackVerified") && !e.Success)) return true;
+
+        var phases = entries.Select(e => e.Phase).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // ApplyStarted without successful Applied (crash mid-mutation)
+        if (phases.Contains("ApplyStarted")
+            && !entries.Any(e => PhaseEq(e, "Applied") && e.Success)
+            && !phases.Contains("RollbackStarted"))
             return true;
-        // Applied (mutation done) without Verify
-        if (phases.Contains("Applied") && !phases.Contains("Verify") && !phases.Contains("RollbackVerified"))
+
+        // Applied (mutation done) without successful Verify / RollbackVerified
+        if (entries.Any(e => PhaseEq(e, "Applied") && e.Success))
             return true;
+
         // Legacy "Apply" phase without Verify
-        if (phases.Contains("Apply") && !phases.Contains("Verify") && !phases.Contains("Rollback") && !phases.Contains("RollbackVerified"))
+        if (phases.Contains("Apply")
+            && !phases.Contains("Verify")
+            && !phases.Contains("Rollback")
+            && !phases.Contains("RollbackVerified"))
             return true;
-        // RollbackStarted without RollbackVerified
-        if (phases.Contains("RollbackStarted") && !phases.Contains("RollbackVerified"))
+
+        // RollbackStarted without successful RollbackVerified
+        if (phases.Contains("RollbackStarted") && !rollbackOk)
             return true;
+
         return false;
     }
 
-    private static bool IsIncomplete(HashSet<string> phases)
-        => phases.Contains("Backup") && !phases.Contains("ApplyStarted") && !phases.Contains("Verify");
+    private static bool IsIncomplete(IReadOnlyList<RepairJournalEntry> entries)
+    {
+        var phases = entries.Select(e => e.Phase).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return phases.Contains("Backup")
+               && !phases.Contains("ApplyStarted")
+               && !phases.Contains("Verify")
+               && !phases.Contains("RollbackVerified");
+    }
+
+    private static bool PhaseEq(RepairJournalEntry e, string phase)
+        => e.Phase.Equals(phase, StringComparison.OrdinalIgnoreCase);
 }

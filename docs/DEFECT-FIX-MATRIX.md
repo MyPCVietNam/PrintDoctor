@@ -1,7 +1,17 @@
-# DEFECT-FIX-MATRIX — P1.1 + HF1 + HF2
+# DEFECT-FIX-MATRIX — P1.1 + HF1 + HF2 + HF2 correction
 
 Baseline: PR #1 `1647875`. PR #2 branch `fix/p11-diagnostic-accuracy-safe-repair`.
-HF2 baseline HEAD: `7a8099e`.
+HF2 correction baseline HEAD: `a33d201`.
+
+## HF2 final correction
+
+| Defect ID | Severity | Status | File/function | After | Test | Result | Remaining risk |
+|-----------|----------|--------|---------------|-------|------|--------|----------------|
+| HF2C-Journal Success | BLOCKER | FIXED (code+unit) | `RepairJournal.IsUncertain` | Phase∧Success; Verify/RollbackVerified false ⇒ UNCERTAIN | HF2C_VerifyFalse_*, HF2C_Applied_RollbackFailed_* | UNIT_PASS | — |
+| HF2C-Corrupt | BLOCKER | FIXED (code+unit) | `RepairJournal.LoadFile`, `CorruptJournal` | Unreadable JSON ⇒ CORRUPT_JOURNAL never Clean | HF2C_CorruptJournal_* | UNIT_PASS | — |
+| HF2C-Executor block | BLOCKER | FIXED (code+unit) | `RepairExecutor.ExecuteAsync` | UNCERTAIN/INCOMPLETE/CORRUPT ⇒ BLOCKED before Apply | HF2C_Executor_* | UNIT_PASS | — |
+| HF2C-Rollback scope | BLOCKER | FIXED (code+unit) | `*Repair.RollbackAsync`, `PARTIAL_CHANGED` PS | Only transaction ChangedRuleIds restored | HF2C_Rollback_OnlyTouches*, HF2C_PsFixture_PartialChanged* | UNIT_PASS | Live Win restore lab **BLOCKED** |
+| HF2C-Collector UNKNOWN | HIGH | FIXED (code+unit) | DecisionEngine / collectors | PS fail ⇒ UNKNOWN not fake PASS | HF2C_PowerShellCollectorFail_* | UNIT_PASS | Read-only Win lab **BLOCKED** |
 
 ## HF2 defects
 

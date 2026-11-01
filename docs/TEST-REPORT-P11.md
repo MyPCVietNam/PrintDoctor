@@ -1,17 +1,22 @@
-# TEST-REPORT — P1.1 HF2
+# TEST-REPORT — P1.1 HF2 final correction (v1.1.3)
 
 | Gate | Result |
 |------|--------|
-| UNIT_PASS | PASS (86) |
-| INTEGRATION_PASS | PASS (9 = 4 prior + 5 HF2 PowerShell fixtures; no firewall mutation in CI) |
-| WINDOWS_CI_PASS | PASS — https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41309438663 |
+| UNIT_PASS | PASS (94) |
+| INTEGRATION_PASS | PASS (9; no firewall mutation in CI) |
+| WINDOWS_CI_PASS | PENDING this push |
 | WIN10_LAB_NOT_RUN | BLOCKED |
 | WIN11_LAB_NOT_RUN | BLOCKED |
 | PHYSICAL_LAN_NOT_RUN | BLOCKED |
 | PHYSICAL_PRINT_NOT_RUN | BLOCKED |
 
-HF2 regressions: remote-fail-before-enable, changed-rule verify, rollback RemoteAddress, Applied-without-Verify, cross-session recovery, multi-NIC selection, non-reversible redaction, wrong client Role, PrintBridge≠ShaPrint.
+## HF2 correction regressions
+- Verify=false + RollbackVerified=false → UNCERTAIN_STATE
+- Applied + rollback failed → UNCERTAIN_STATE
+- Corrupt journal → CORRUPT_JOURNAL / BLOCKED
+- Executor with unfinished prior tx → Apply blocked
+- Rollback only transaction ChangedRuleIds
+- PowerShell collector fail → UNKNOWN (no fake PASS)
+- PARTIAL_CHANGED parsed on Apply failure
 
-Windows fixtures: `tests/fixtures/powershell/firewall-safe-scope.assertions.md` + `Hf2WindowsPowerShellFixtureTests` (recording runner). Live mutation gated by `LPD_ALLOW_FIREWALL_MUTATION` (not set in CI).
-
-Honest note: unit/fake + script-contract coverage ≠ Win10/11 physical LAN validation. Not FIELD READY.
+Honest note: code safety closed for these defects at unit/fixture level. Live Windows read-only lab still required before FIELD READY. Not FIELD/PRODUCTION READY.

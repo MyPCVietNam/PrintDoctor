@@ -305,10 +305,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             var journalsRoot = Path.Combine(_exporter.DefaultRoot, "Journals");
             var crossSession = RepairJournal.ScanAllSessions(journalsRoot);
-            if (crossSession is RepairRecoveryState.UncertainState or RepairRecoveryState.Incomplete)
+            if (crossSession is RepairRecoveryState.UncertainState
+                or RepairRecoveryState.Incomplete
+                or RepairRecoveryState.CorruptJournal)
             {
                 var details = RepairJournal.ListUncertain(journalsRoot);
-                StatusText = "UNCERTAIN_STATE: unfinished repair transaction(s) across sessions — review journal; no auto-rollback; further repairs blocked.";
+                StatusText = crossSession == RepairRecoveryState.CorruptJournal
+                    ? "CORRUPT_JOURNAL: unreadable repair journal — further repairs blocked."
+                    : "UNCERTAIN_STATE: unfinished repair transaction(s) across sessions — review journal; no auto-rollback; further repairs blocked.";
                 MessageBox.Show(
                     StatusText + "\n\n" + string.Join("\n", details.Take(8).Select(d => $"{d.SessionPath}: {d.OperationId}/{d.TransactionId} {d.Detail}")),
                     Labels.SafeRepair,
@@ -319,9 +323,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             var journalDir = Path.Combine(journalsRoot, _lastSnapshot.SessionId);
             _lastJournal = new RepairJournal(journalDir);
-            if (_lastJournal.GetRecoveryState() == RepairRecoveryState.UncertainState)
+            if (_lastJournal.GetRecoveryState() is RepairRecoveryState.UncertainState
+                or RepairRecoveryState.Incomplete
+                or RepairRecoveryState.CorruptJournal)
             {
-                StatusText = "UNCERTAIN_STATE: prior repair Applied/ApplyStarted without Verify — review journal before another repair.";
+                StatusText = _lastJournal.IsCorrupt
+                    ? "CORRUPT_JOURNAL: prior journal unreadable — review before another repair."
+                    : "UNCERTAIN_STATE: prior repair Applied/ApplyStarted without successful Verify — review journal before another repair.";
                 MessageBox.Show(StatusText, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }

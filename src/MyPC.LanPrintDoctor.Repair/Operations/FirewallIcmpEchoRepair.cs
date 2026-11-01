@@ -73,9 +73,12 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
     public async Task ApplyAsync(CancellationToken ct = default)
     {
         var result = await _firewall.EnableScopedIcmpEchoAsync(ct);
-        if (!result.Success)
-            throw new InvalidOperationException(result.Detail ?? "Scoped ICMP enable failed (Enable not applied without scope).");
+        // Always capture ids actually mutated — including mid-failure partial lists.
         _changedRuleIds = result.ChangedRuleIds.ToList();
+        if (!result.Success)
+            throw new InvalidOperationException(
+                (result.Detail ?? "Scoped ICMP enable failed (Enable not applied without scope).")
+                + ( _changedRuleIds.Count > 0 ? " PARTIAL_CHANGED:" + string.Join(',', _changedRuleIds) : ""));
         if (_changedRuleIds.Count == 0)
             throw new InvalidOperationException("No changed rule ids recorded — refusing success.");
     }
@@ -90,7 +93,20 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
 
     public async Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default)
     {
-        var restored = await _firewall.RestoreIcmpEchoFromBackupAsync(backup.PayloadJson ?? "[]", ct);
+        // Only restore rules belonging to this transaction's changed-id list.
+        var payload = FilterBackupToChanged(backup.PayloadJson ?? "[]", _changedRuleIds);
+        if (_changedRuleIds.Count == 0)
+        {
+            return new RollbackResult
+            {
+                Attempted = false,
+                Succeeded = false,
+                Verified = false,
+                Message = "No changed rule ids in transaction — refusing to touch unrelated firewall rules."
+            };
+        }
+
+        var restored = await _firewall.RestoreIcmpEchoFromBackupAsync(payload, ct);
         return new RollbackResult
         {
             Attempted = true,
@@ -99,6 +115,22 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
             Partial = restored.Partial,
             Message = restored.Message ?? (restored.Verified ? "verified" : "not verified")
         };
+    }
+
+    internal static string FilterBackupToChanged(string backupJson, IReadOnlyList<string> changedIds)
+    {
+        if (changedIds.Count == 0) return "[]";
+        try
+        {
+            var all = JsonSerializer.Deserialize<List<FirewallRuleInfo>>(backupJson) ?? new();
+            var filtered = all.Where(r =>
+                changedIds.Any(id => string.Equals(id, r.RuleId ?? r.Name, StringComparison.OrdinalIgnoreCase))).ToList();
+            return JsonSerializer.Serialize(filtered);
+        }
+        catch
+        {
+            return "[]";
+        }
     }
 
     public static bool IsEnabledScopedIcmp(FirewallRuleInfo r) => FirewallRuleScope.IsScopedIcmpEcho(r);

@@ -200,31 +200,48 @@ try {
     public async Task<FirewallMutationResult> EnableScopedIcmpEchoAsync(CancellationToken ct = default)
     {
         // Scope FIRST — never Enable if Profile/RemoteAddress set fails. No empty catch.
+        // On mid-failure after mutation, still emit PARTIAL_CHANGED so the transaction can roll back only that id.
         const string script = @"
 $ErrorActionPreference = 'Stop'
-$r = Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -PolicyStore ActiveStore -ErrorAction Stop
-if ($r.PolicyStore -match 'GP|GroupPolicy') { throw 'GPO_MANAGED' }
-Set-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -Profile Private -Direction Inbound -Action Allow -ErrorAction Stop
-Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop) -RemoteAddress LocalSubnet -ErrorAction Stop
-$pre = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop) -ErrorAction Stop
-if ([string]$pre.RemoteAddress -notmatch 'LocalSubnet') { throw 'REMOTE_NOT_SET:' + $pre.RemoteAddress }
-$preRule = Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop
-if ([string]$preRule.Profile -notmatch 'Private' -or [string]$preRule.Profile -match 'Public|Domain') { throw 'PROFILE_NOT_SET:' + $preRule.Profile }
-Enable-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop
-$v = Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop
-$addr = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $v -ErrorAction Stop
-if ($v.Enabled -ne 'True' -and $v.Enabled -ne $true) { throw 'NOT_ENABLED' }
-if ([string]$v.Profile -notmatch 'Private' -or [string]$v.Profile -match 'Public|Domain') { throw 'BAD_PROFILE:' + $v.Profile }
-if ([string]$addr.RemoteAddress -notmatch 'LocalSubnet') { throw 'BAD_REMOTE:' + $addr.RemoteAddress }
-'CHANGED:FPS-ICMP4-ERQ-In'
+$changed = New-Object System.Collections.Generic.List[string]
+try {
+  $r = Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -PolicyStore ActiveStore -ErrorAction Stop
+  if ($r.PolicyStore -match 'GP|GroupPolicy') { throw 'GPO_MANAGED' }
+  Set-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -Profile Private -Direction Inbound -Action Allow -ErrorAction Stop
+  Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop) -RemoteAddress LocalSubnet -ErrorAction Stop
+  $pre = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop) -ErrorAction Stop
+  if ([string]$pre.RemoteAddress -notmatch 'LocalSubnet') { throw 'REMOTE_NOT_SET:' + $pre.RemoteAddress }
+  $preRule = Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop
+  if ([string]$preRule.Profile -notmatch 'Private' -or [string]$preRule.Profile -match 'Public|Domain') { throw 'PROFILE_NOT_SET:' + $preRule.Profile }
+  Enable-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop
+  $changed.Add('FPS-ICMP4-ERQ-In') | Out-Null
+  $v = Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop
+  $addr = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $v -ErrorAction Stop
+  if ($v.Enabled -ne 'True' -and $v.Enabled -ne $true) { throw 'NOT_ENABLED' }
+  if ([string]$v.Profile -notmatch 'Private' -or [string]$v.Profile -match 'Public|Domain') { throw 'BAD_PROFILE:' + $v.Profile }
+  if ([string]$addr.RemoteAddress -notmatch 'LocalSubnet') { throw 'BAD_REMOTE:' + $addr.RemoteAddress }
+  'CHANGED:FPS-ICMP4-ERQ-In'
+} catch {
+  if ($changed.Count -gt 0) { 'PARTIAL_CHANGED:' + ($changed -join ',') + '|ERR:' + $_.Exception.Message; exit 1 }
+  throw
+}
 ";
-        var raw = await Run(script, ct);
-        if (raw is null || !raw.Contains("CHANGED:", StringComparison.Ordinal))
-            return new FirewallMutationResult { Success = false, Detail = raw ?? "PowerShell failed before Enable (scope must succeed first)." };
+        var result = await _runner.RunAsync("powershell.exe", new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script }, TimeSpan.FromSeconds(60), ct);
+        var raw = (result.StdOut ?? "").Trim();
+        var ids = ParseChangedRuleIds(raw);
+        var partial = raw.Contains("PARTIAL_CHANGED:", StringComparison.Ordinal);
+        var full = !partial && raw.Contains("CHANGED:", StringComparison.Ordinal);
+        if (result.ExitCode != 0 || !full)
+            return new FirewallMutationResult
+            {
+                Success = false,
+                ChangedRuleIds = ids,
+                Detail = string.IsNullOrWhiteSpace(raw) ? (result.StdErr ?? "PowerShell failed before Enable (scope must succeed first).") : raw
+            };
         return new FirewallMutationResult
         {
             Success = true,
-            ChangedRuleIds = new[] { "FPS-ICMP4-ERQ-In" },
+            ChangedRuleIds = ids.Count > 0 ? ids : new[] { "FPS-ICMP4-ERQ-In" },
             Detail = raw
         };
     }
@@ -299,36 +316,50 @@ if ([string]$chk.RemoteAddress -ne '{remote}' -and [string]$chk.RemoteAddress -n
     public async Task<FirewallMutationResult> EnableFileAndPrinterSharingAsync(CancellationToken ct = default)
     {
         // NEVER -Group. Never Enable if RemoteAddress set fails (no empty catch).
+        // On mid-loop failure, emit PARTIAL_CHANGED with ids already mutated in this transaction.
         const string script = @"
 $ErrorActionPreference = 'Stop'
 $approved = @('FPS-SMB-In-TCP','FPS-NBSession-In-TCP','FPS-RPCSS-In-TCP','FPS-SpoolSvc-In-TCP')
 $changed = New-Object System.Collections.Generic.List[string]
-foreach ($name in $approved) {
-  $r = Get-NetFirewallRule -Name $name -PolicyStore ActiveStore -ErrorAction SilentlyContinue
-  if (-not $r) { continue }
-  if ($r.PolicyStore -match 'GP|GroupPolicy') { continue }
-  if ([string]$r.Direction -notmatch 'Inbound|In') { continue }
-  Set-NetFirewallRule -Name $name -Profile Private -Direction Inbound -Action Allow -ErrorAction Stop
-  Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name $name -ErrorAction Stop) -RemoteAddress LocalSubnet -ErrorAction Stop
-  $pre = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name $name -ErrorAction Stop) -ErrorAction Stop
-  if ([string]$pre.RemoteAddress -notmatch 'LocalSubnet') { throw 'REMOTE_NOT_SET:' + $name + ':' + $pre.RemoteAddress }
-  $preRule = Get-NetFirewallRule -Name $name -ErrorAction Stop
-  if ([string]$preRule.Profile -notmatch 'Private' -or [string]$preRule.Profile -match 'Public|Domain') { throw 'PROFILE_NOT_SET:' + $name }
-  Enable-NetFirewallRule -Name $name -ErrorAction Stop
-  $v = Get-NetFirewallRule -Name $name -ErrorAction Stop
-  $addr = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $v -ErrorAction Stop
-  if (-not (($v.Enabled -eq $true -or $v.Enabled -eq 'True') -and ([string]$v.Profile -match 'Private') -and ([string]$v.Profile -notmatch 'Public|Domain') -and ([string]$addr.RemoteAddress -match 'LocalSubnet'))) {
-    throw 'POST_ENABLE_SCOPE_FAIL:' + $name
+try {
+  foreach ($name in $approved) {
+    $r = Get-NetFirewallRule -Name $name -PolicyStore ActiveStore -ErrorAction SilentlyContinue
+    if (-not $r) { continue }
+    if ($r.PolicyStore -match 'GP|GroupPolicy') { continue }
+    if ([string]$r.Direction -notmatch 'Inbound|In') { continue }
+    Set-NetFirewallRule -Name $name -Profile Private -Direction Inbound -Action Allow -ErrorAction Stop
+    Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name $name -ErrorAction Stop) -RemoteAddress LocalSubnet -ErrorAction Stop
+    $pre = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name $name -ErrorAction Stop) -ErrorAction Stop
+    if ([string]$pre.RemoteAddress -notmatch 'LocalSubnet') { throw 'REMOTE_NOT_SET:' + $name + ':' + $pre.RemoteAddress }
+    $preRule = Get-NetFirewallRule -Name $name -ErrorAction Stop
+    if ([string]$preRule.Profile -notmatch 'Private' -or [string]$preRule.Profile -match 'Public|Domain') { throw 'PROFILE_NOT_SET:' + $name }
+    Enable-NetFirewallRule -Name $name -ErrorAction Stop
+    $v = Get-NetFirewallRule -Name $name -ErrorAction Stop
+    $addr = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $v -ErrorAction Stop
+    if (-not (($v.Enabled -eq $true -or $v.Enabled -eq 'True') -and ([string]$v.Profile -match 'Private') -and ([string]$v.Profile -notmatch 'Public|Domain') -and ([string]$addr.RemoteAddress -match 'LocalSubnet'))) {
+      throw 'POST_ENABLE_SCOPE_FAIL:' + $name
+    }
+    $changed.Add($name) | Out-Null
   }
-  $changed.Add($name) | Out-Null
+  if ($changed.Count -lt 1) { throw 'NO_SCOPED_FPS_RULE_ENABLED' }
+  'CHANGED:' + ($changed -join ',')
+} catch {
+  if ($changed.Count -gt 0) { 'PARTIAL_CHANGED:' + ($changed -join ',') + '|ERR:' + $_.Exception.Message; exit 1 }
+  throw
 }
-if ($changed.Count -lt 1) { throw 'NO_SCOPED_FPS_RULE_ENABLED' }
-'CHANGED:' + ($changed -join ',')
 ";
-        var raw = await Run(script, ct);
-        if (raw is null || !raw.Contains("CHANGED:", StringComparison.Ordinal))
-            return new FirewallMutationResult { Success = false, Detail = raw ?? "FPS scoped enable failed before/without Enable." };
-        var list = raw.Split(':').Last().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var result = await _runner.RunAsync("powershell.exe", new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script }, TimeSpan.FromSeconds(60), ct);
+        var raw = (result.StdOut ?? "").Trim();
+        var list = ParseChangedRuleIds(raw);
+        var partial = raw.Contains("PARTIAL_CHANGED:", StringComparison.Ordinal);
+        var full = !partial && raw.Contains("CHANGED:", StringComparison.Ordinal);
+        if (result.ExitCode != 0 || partial || !full || list.Count == 0)
+            return new FirewallMutationResult
+            {
+                Success = false,
+                ChangedRuleIds = list,
+                Detail = string.IsNullOrWhiteSpace(raw) ? (result.StdErr ?? "FPS scoped enable failed before/without Enable.") : raw
+            };
         return new FirewallMutationResult { Success = true, ChangedRuleIds = list, Detail = raw };
     }
 
@@ -411,6 +442,19 @@ if ([string]$chk.RemoteAddress -notmatch [regex]::Escape('{Escape(remote)}') -an
         {
             return new FirewallRestoreResult { Succeeded = false, Verified = false, Message = ex.Message };
         }
+    }
+
+    private static IReadOnlyList<string> ParseChangedRuleIds(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return Array.Empty<string>();
+        // Prefer PARTIAL_CHANGED — the token "CHANGED:" is a substring of "PARTIAL_CHANGED:".
+        var marker = raw.Contains("PARTIAL_CHANGED:", StringComparison.Ordinal) ? "PARTIAL_CHANGED:" : "CHANGED:";
+        var idx = raw.IndexOf(marker, StringComparison.Ordinal);
+        if (idx < 0) return Array.Empty<string>();
+        var rest = raw[(idx + marker.Length)..];
+        var stop = rest.IndexOfAny(new[] { '|', '\r', '\n' });
+        if (stop >= 0) rest = rest[..stop];
+        return rest.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
     private async Task<string?> Run(string script, CancellationToken ct)

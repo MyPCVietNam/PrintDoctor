@@ -9,12 +9,13 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$OUT" "$ROOT/artifacts/release"
 
 FULL="$OUT/MyPC-PrintDoctor-P11-FULL-SOURCE.zip"
-CHANGED="$OUT/MyPC-PrintDoctor-P11-HF2-CHANGED-SOURCE.zip"
-# Keep legacy name as copy for older scripts
+CHANGED="$OUT/MyPC-PrintDoctor-P11-HF2-CORRECTION-CHANGED-SOURCE.zip"
+# Keep HF2 + legacy names as copies for older scripts
+CHANGED_HF2="$OUT/MyPC-PrintDoctor-P11-HF2-CHANGED-SOURCE.zip"
 CHANGED_LEGACY="$OUT/MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip"
 RELEASE="$OUT/MyPC-PrintDoctor-P11-RELEASE-x64.zip"
 
-rm -f "$FULL" "$CHANGED" "$RELEASE"
+rm -f "$FULL" "$CHANGED" "$CHANGED_HF2" "$CHANGED_LEGACY" "$RELEASE"
 rm -f "$OUT/RELEASE_BLOCKED.txt"
 
 # --- FULL SOURCE ---
@@ -51,6 +52,7 @@ done
 
 cd "$STAGE"
 zip -rq "$CHANGED" .
+cp -f "$CHANGED" "$CHANGED_HF2"
 cp -f "$CHANGED" "$CHANGED_LEGACY"
 
 # --- RELEASE: only real publish with EXE verification ---
@@ -90,10 +92,11 @@ HF2_BASELINE="${HF2_BASELINE:-7a8099ec99d5d7a02fc90bc9993b28d607f085c4}"
 cat > "$OUT/MANIFEST.json" <<EOF
 {
   "product": "MyPC LAN & Print Doctor",
-  "phase": "P1.1-HF2",
-  "version": "1.1.2",
+  "phase": "P1.1-HF2-CORRECTION",
+  "version": "1.1.3",
   "baselineCommit": "$BASELINE",
   "hf2BaselineCommit": "$HF2_BASELINE",
+  "hf2CorrectionBaselineCommit": "a33d201841049523b801e9d31950532684ef6cbd",
   "commit": "$COMMIT",
   "ciUrl": "$CI_URL",
   "generatedUtc": "$STAMP",
@@ -103,6 +106,7 @@ cat > "$OUT/MANIFEST.json" <<EOF
   "releaseAuthority": "GitHub Actions windows-latest artifact preferred; local zip is packaging convenience only",
   "artifacts": [
     "MyPC-PrintDoctor-P11-FULL-SOURCE.zip",
+    "MyPC-PrintDoctor-P11-HF2-CORRECTION-CHANGED-SOURCE.zip",
     "MyPC-PrintDoctor-P11-HF2-CHANGED-SOURCE.zip",
     "MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip",
     "MyPC-PrintDoctor-P11-RELEASE-x64.zip",
@@ -134,7 +138,7 @@ cp "$ROOT/docs/BUILD-INFO-P11.md" "$OUT/BUILD-INFO.md" 2>/dev/null || true
 
 (
   cd "$OUT"
-  FILES_HASH=(MyPC-PrintDoctor-P11-FULL-SOURCE.zip MyPC-PrintDoctor-P11-HF2-CHANGED-SOURCE.zip MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip MANIFEST.json CHANGELOG.md DEFECT-FIX-MATRIX.md TEST-REPORT.md BUILD-INFO.md)
+  FILES_HASH=(MyPC-PrintDoctor-P11-FULL-SOURCE.zip MyPC-PrintDoctor-P11-HF2-CORRECTION-CHANGED-SOURCE.zip MyPC-PrintDoctor-P11-HF2-CHANGED-SOURCE.zip MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip MANIFEST.json CHANGELOG.md DEFECT-FIX-MATRIX.md TEST-REPORT.md BUILD-INFO.md)
   if [[ -f MyPC-PrintDoctor-P11-RELEASE-x64.zip ]]; then
     FILES_HASH+=(MyPC-PrintDoctor-P11-RELEASE-x64.zip)
   fi

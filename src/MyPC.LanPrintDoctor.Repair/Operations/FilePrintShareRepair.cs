@@ -67,9 +67,12 @@ public sealed class FilePrintShareRepair : IRepairOperation
     public async Task ApplyAsync(CancellationToken ct = default)
     {
         var result = await _firewall.EnableFileAndPrinterSharingAsync(ct);
-        if (!result.Success)
-            throw new InvalidOperationException(result.Detail ?? "Scoped FPS enable failed.");
+        // Record every id mutated in this transaction — even when Apply fails mid-loop.
         _changedRuleIds = result.ChangedRuleIds.ToList();
+        if (!result.Success)
+            throw new InvalidOperationException(
+                (result.Detail ?? "Scoped FPS enable failed.")
+                + (_changedRuleIds.Count > 0 ? " PARTIAL_CHANGED:" + string.Join(',', _changedRuleIds) : ""));
         if (_changedRuleIds.Count == 0)
             throw new InvalidOperationException("No changed FPS rule ids recorded.");
     }
@@ -90,13 +93,26 @@ public sealed class FilePrintShareRepair : IRepairOperation
 
     public async Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default)
     {
-        var restored = await _firewall.RestoreFileAndPrinterSharingFromBackupAsync(backup.PayloadJson ?? "[]", ct);
+        if (_changedRuleIds.Count == 0)
+        {
+            return new RollbackResult
+            {
+                Attempted = false,
+                Succeeded = false,
+                Verified = false,
+                Message = "No changed rule ids in transaction — refusing to restore unrelated FPS rules."
+            };
+        }
+
+        var payload = FirewallIcmpEchoRepair.FilterBackupToChanged(backup.PayloadJson ?? "[]", _changedRuleIds);
+        var restored = await _firewall.RestoreFileAndPrinterSharingFromBackupAsync(payload, ct);
+        // Never claim Verified unless re-read matched backup for every changed id.
         return new RollbackResult
         {
             Attempted = true,
             Succeeded = restored.Succeeded,
             Verified = restored.Verified && !restored.Partial,
-            Partial = restored.Partial,
+            Partial = restored.Partial || !restored.Verified,
             Message = restored.Message
         };
     }

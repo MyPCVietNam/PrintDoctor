@@ -18,11 +18,39 @@ public sealed class RepairExecutor
     {
         var tx = Guid.NewGuid().ToString("N");
 
-        // Prior crash detection — never auto-claim recovered.
-        if (_journal.GetRecoveryState() == RepairRecoveryState.UncertainState)
+        // Prior unfinished / corrupt journal — BLOCK immediately (engine-level; UI-independent).
+        // Never warn-and-continue into Apply.
+        var recovery = _journal.GetRecoveryState();
+        if (recovery is RepairRecoveryState.UncertainState
+            or RepairRecoveryState.Incomplete
+            or RepairRecoveryState.CorruptJournal)
         {
-            _journal.Record(tx, operation.OperationId, "UncertainStateDetected", false,
-                "Prior ApplyStarted without Applied/Verified/Rollback — UNCERTAIN_STATE; operator must review.");
+            var code = recovery switch
+            {
+                RepairRecoveryState.CorruptJournal => "CORRUPT_JOURNAL",
+                RepairRecoveryState.Incomplete => "INCOMPLETE",
+                _ => "UNCERTAIN_STATE"
+            };
+            try
+            {
+                if (!_journal.IsCorrupt)
+                    _journal.Record(tx, operation.OperationId, "BlockedPriorTransaction", false,
+                        $"{code}: prior transaction unfinished — further Apply blocked until technician review.");
+            }
+            catch
+            {
+                // Corrupt journal refuses append — still return BLOCKED below.
+            }
+
+            return new RepairResult
+            {
+                OperationId = operation.OperationId,
+                TransactionId = tx,
+                Applied = false,
+                Verified = false,
+                Status = DiagnosticStatus.Blocked,
+                Message = $"{code}: prior repair journal requires technician review; Apply blocked (no auto-rollback)."
+            };
         }
 
         if (findingOwner == RepairOwnerRole.ServerActionRequired

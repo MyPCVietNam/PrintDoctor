@@ -15,10 +15,13 @@ public sealed class FakeFirewallInspector : IFirewallInspector
     /// <summary>Simulate Set-NetFirewallAddressFilter failure — Enable must not run.</summary>
     public bool FailRemoteAddressSet { get; set; }
     public bool FailRemoteAddressRestore { get; set; }
+    /// <summary>Change first FPS rule then fail — ChangedRuleIds must still be recorded.</summary>
+    public bool FailMidApplyAfterFirst { get; set; }
     public int IcmpEnableCalls { get; private set; }
     public int SharingEnableCalls { get; private set; }
     public int GroupEnableCalls { get; private set; }
     public int EnableInvocationsAfterFailedScope { get; private set; }
+    public List<string> LastRestoredRuleIds { get; } = new();
 
     public Task<IReadOnlyList<FirewallProfileState>> GetProfilesAsync(CancellationToken ct = default)
         => Task.FromResult((IReadOnlyList<FirewallProfileState>)Profiles);
@@ -159,6 +162,15 @@ public sealed class FakeFirewallInspector : IFirewallInspector
                 PolicyStore = "ActiveStore"
             });
             changed.Add(id);
+            if (FailMidApplyAfterFirst)
+            {
+                return Task.FromResult(new FirewallMutationResult
+                {
+                    Success = false,
+                    ChangedRuleIds = changed.ToList(),
+                    Detail = "PARTIAL_CHANGED mid-apply failure after " + id
+                });
+            }
         }
         return Task.FromResult(new FirewallMutationResult { Success = true, ChangedRuleIds = changed });
     }
@@ -170,16 +182,16 @@ public sealed class FakeFirewallInspector : IFirewallInspector
             var priors = JsonSerializer.Deserialize<List<FirewallRuleInfo>>(string.IsNullOrWhiteSpace(backupJson) ? "[]" : backupJson)
                          ?? new();
             var restored = new List<string>();
+            // Only restore rules present in the (already filtered) backup payload — never invent others.
             foreach (var prior in priors.Where(r => (r.RuleId ?? "").StartsWith("FPS-", StringComparison.OrdinalIgnoreCase)))
             {
-                Rules.RemoveAll(r => string.Equals(r.RuleId, prior.RuleId, StringComparison.OrdinalIgnoreCase)
-                                     && string.Equals(r.Profiles, prior.Profiles, StringComparison.OrdinalIgnoreCase));
-                // Keep Public copies
                 Rules.RemoveAll(r => string.Equals(r.RuleId, prior.RuleId, StringComparison.OrdinalIgnoreCase)
                                      && (r.Profiles ?? "").Contains("Private", StringComparison.OrdinalIgnoreCase));
                 Rules.Add(Clone(prior));
                 restored.Add(prior.RuleId ?? prior.Name);
             }
+            LastRestoredRuleIds.Clear();
+            LastRestoredRuleIds.AddRange(restored);
             return Task.FromResult(new FirewallRestoreResult
             {
                 Succeeded = true,

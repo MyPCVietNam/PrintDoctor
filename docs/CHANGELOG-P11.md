@@ -1,32 +1,21 @@
-# Changelog — v1.1.2 (P1.1 HF2)
+# Changelog — v1.1.3 (P1.1 HF2 final correction)
 
-## Final safety gate (HF2)
+## HF2 final correction (safety)
 
-### Firewall strict scope
-- Removed empty `catch` around `Set-NetFirewallAddressFilter`.
-- Enable never runs unless Profile=Private and RemoteAddress=LocalSubnet re-read succeeds.
-- Empty RemoteAddresses is **not** LocalSubnet evidence.
-- Verify checks **all changed rule ids** (recorded list), not “any matching rule”.
-- Approved FPS rule ids only; no `-Group` enable; Public rules untouched.
+### RepairJournal recovery
+- `IsUncertain` evaluates **Phase and Success**.
+- `Verify=false` and `RollbackVerified=false` never count as completed.
+- Unreadable journal JSON ⇒ `CorruptJournal` / **CORRUPT_JOURNAL** (never Clean).
+- `ScanAllSessions` detects Uncertain, Incomplete, and Corrupt across sessions.
 
-### Exact rollback
-- Restore sets Profile/Direction/Action/RemoteAddress before enable/disable.
-- Re-read `MatchesBackupSnapshot`; RemoteAddress restore failure ⇒ PARTIAL_ROLLBACK, never Verified=true.
+### RepairExecutor
+- Prior `UNCERTAIN_STATE`, `INCOMPLETE`, or `CORRUPT_JOURNAL` ⇒ immediate **BLOCKED**.
+- No warn-and-continue into Apply (engine-level; UI-independent).
 
-### Crash recovery across sessions
-- `Applied` without `Verify` ⇒ UNCERTAIN_STATE.
-- `RepairJournal.ScanAllSessions` blocks further repairs until technician review (no auto-rollback).
-
-### Network profile target
-- Explicit InterfaceIndex required; Preview shows Alias/IP/GW/Category; InterfaceIndex=? refused.
-
-### Privacy & ShaPrint
-- Ephemeral HMAC tokens (key not in ZIP); not raw SHA256(IP).
-- ShaPrint listeners require ShaPrint executable path/PID — PrintBridge ≠ ShaPrint (FOREIGN_PROCESS/PORT_CONFLICT).
-
-### Regression / CI
-- HF2 unit suite + PowerShell script-contract fixtures (`Hf2WindowsPowerShellFixtureTests`, recording runner).
-- CI never mutates production firewall; live mutation gated by `LPD_ALLOW_FIREWALL_MUTATION`.
+### Firewall rollback scope
+- Capture `ChangedRuleIds` even on mid-Apply failure (`PARTIAL_CHANGED`).
+- Rollback restores **only** transaction-changed rules; unrelated/Public rules untouched.
+- Never claim Verified without full backup re-read match.
 
 ## Non-claims
-Windows 10/11 + physical LAN still NOT_RUN. Not FIELD/PRODUCTION READY. Fake unit tests do not close Windows compatibility alone.
+Windows 10/11 physical LAN read-only labs still **BLOCKED / NOT_RUN**. Not FIELD/PRODUCTION READY.
