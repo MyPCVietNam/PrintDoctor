@@ -6,8 +6,13 @@ namespace MyPC.LanPrintDoctor.Repair;
 public sealed class RepairExecutor
 {
     private readonly RepairJournal _journal;
+    private readonly string? _lockDirectory;
 
-    public RepairExecutor(RepairJournal journal) => _journal = journal;
+    public RepairExecutor(RepairJournal journal, string? lockDirectory = null)
+    {
+        _journal = journal;
+        _lockDirectory = lockDirectory;
+    }
 
     public async Task<RepairResult> ExecuteAsync(
         IRepairOperation operation,
@@ -50,6 +55,20 @@ public sealed class RepairExecutor
                 Verified = false,
                 Status = DiagnosticStatus.Blocked,
                 Message = $"{code}: prior repair journal requires technician review; Apply blocked (no auto-rollback)."
+            };
+        }
+
+        using var machineLock = new MachineRepairLock(_lockDirectory ?? _journal.DirectoryPath);
+        if (!machineLock.TryAcquire(TimeSpan.FromMilliseconds(200)))
+        {
+            return new RepairResult
+            {
+                OperationId = operation.OperationId,
+                TransactionId = tx,
+                Applied = false,
+                Verified = false,
+                Status = DiagnosticStatus.Blocked,
+                Message = "CONCURRENT_REPAIR_BLOCKED: another repair holds the machine lock."
             };
         }
 
@@ -184,6 +203,7 @@ public sealed class RepairExecutor
                     Status = DiagnosticStatus.Fail,
                     Message = BuildFailMessage("Repair applied but verification failed.", rb, operation.SupportsRollback)
                         + (rb.Partial ? " PARTIAL_ROLLBACK." : "")
+                        + " LOCAL_CONFIG may be incomplete; END_TO_END_NOT_VERIFIED."
                 };
             }
 
@@ -195,7 +215,56 @@ public sealed class RepairExecutor
                 Verified = true,
                 BackupId = backup.BackupId,
                 Status = DiagnosticStatus.Pass,
-                Message = "Repair applied and verified."
+                Message = "LOCAL_CONFIG_VERIFIED — re-probe client path before claiming FIXED. END_TO_END_NOT_VERIFIED until client confirms.",
+                EndToEndNotVerified = true
+            };
+        }
+        catch (RepairNoChangeException ncx)
+        {
+            _journal.Record(tx, operation.OperationId, "NoChange", true, ncx.Message);
+            _journal.Record(tx, operation.OperationId, "Verify", true, "ALREADY_CONFIGURED");
+            return new RepairResult
+            {
+                OperationId = operation.OperationId,
+                TransactionId = tx,
+                Applied = false,
+                Verified = true,
+                NoChange = true,
+                BackupId = backup?.BackupId,
+                Status = DiagnosticStatus.Pass,
+                Message = ncx.Message
+            };
+        }
+        catch (RepairBlockedException bx)
+        {
+            // P21-001: RULE_EXISTS / mismatch — never destructive rollback of preexisting.
+            _journal.Record(tx, operation.OperationId, "Blocked", false, bx.Message);
+            if (backup is not null)
+            {
+                var rb = await SafeRollbackAsync(tx, operation, backup, operation.SupportsRollback);
+                return new RepairResult
+                {
+                    OperationId = operation.OperationId,
+                    TransactionId = tx,
+                    Applied = false,
+                    Verified = false,
+                    BackupId = backup.BackupId,
+                    RollbackAttempted = rb.Attempted,
+                    RolledBack = rb.Succeeded && rb.Verified && rb.Attempted,
+                    RollbackVerified = rb.Verified,
+                    Status = DiagnosticStatus.Blocked,
+                    Message = bx.Message + (rb.Attempted ? "" : " (no preexisting objects deleted)")
+                };
+            }
+
+            return new RepairResult
+            {
+                OperationId = operation.OperationId,
+                TransactionId = tx,
+                Applied = false,
+                Verified = false,
+                Status = DiagnosticStatus.Blocked,
+                Message = bx.Message
             };
         }
         catch (Exception ex)

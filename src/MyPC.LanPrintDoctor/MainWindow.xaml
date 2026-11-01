@@ -62,6 +62,13 @@
 
           <Button Content="{Binding Labels.Scan}" Style="{StaticResource PrimaryButton}" Command="{Binding ScanCommand}" Margin="0,0,0,8"/>
           <Button Content="{Binding Labels.Causes}" Style="{StaticResource GhostButton}" Command="{Binding ShowCausesCommand}" Margin="0,0,0,8"/>
+
+          <TextBlock Text="SỬA LỖI (chọn một)" FontWeight="SemiBold" Margin="0,4,0,6"/>
+          <ListBox ItemsSource="{Binding AvailableRepairs}" SelectedItem="{Binding SelectedRepair}"
+                   Height="120" Margin="0,0,0,8"
+                   Background="{StaticResource BrushBgElevated}" BorderBrush="#FF2A3344"
+                   DisplayMemberPath="."
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
           <Button Content="{Binding Labels.SafeRepair}" Style="{StaticResource GhostButton}" Command="{Binding SafeRepairCommand}" Margin="0,0,0,8"/>
           <Button Content="{Binding Labels.Export}" Style="{StaticResource GhostButton}" Command="{Binding ExportCommand}" Margin="0,0,0,8"/>
           <Button Content="{Binding Labels.Compare}" Style="{StaticResource GhostButton}" Command="{Binding CompareCommand}" Margin="0,0,0,16"/>

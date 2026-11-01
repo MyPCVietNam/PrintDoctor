@@ -122,7 +122,25 @@ public class P2RegressionTests
             }
         };
         var findings = new NetworkRootCauseEngine().Analyze(snap);
-        Assert.Contains(findings, f => f.CaseId == "RC-CASE-A" && f.InfrastructureActionRequired);
+        Assert.Contains(findings, f => f.CaseId == "RC-CASE-A" && f.InfrastructureInvestigationRecommended);
+        Assert.DoesNotContain(findings, f => f.CaseId == "RC-CASE-A" && f.InfrastructureActionRequired);
+    }
+
+    [Fact]
+    public void P21_003_HostMatch_NoSubstring()
+    {
+        Assert.True(NetworkRootCauseEngine.TargetsMatch("192.168.1.10", "192.168.1.10"));
+        Assert.False(NetworkRootCauseEngine.TargetsMatch("192.168.1.100", "192.168.1.10"));
+        Assert.False(NetworkRootCauseEngine.TargetsMatch("192.168.1.10", "192.168.1.100"));
+    }
+
+    [Fact]
+    public void P21_002_RemoteAddress_LocalSubnetAny_NotExactLocalSubnet()
+    {
+        Assert.False(FirewallRemoteAddress.ExactMatch("LocalSubnet,Any", "LocalSubnet"));
+        Assert.False(FirewallRemoteAddress.IsSafeLanScope("Any"));
+        Assert.False(FirewallRemoteAddress.IsSafeLanScope("0.0.0.0/0"));
+        Assert.True(FirewallRemoteAddress.ExactMatch("LocalSubnet", "LocalSubnet"));
     }
 
     [Fact]

@@ -14,6 +14,9 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\Simulation\fixtures\**\*" Link="SimulationFixtures\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\MyPC.LanPrintDoctor.Abstractions\MyPC.LanPrintDoctor.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\MyPC.LanPrintDoctor.Core\MyPC.LanPrintDoctor.Core.csproj" />
     <ProjectReference Include="..\..\src\MyPC.LanPrintDoctor.Network\MyPC.LanPrintDoctor.Network.csproj" />

@@ -61,6 +61,10 @@ public sealed class RepairResult
     public bool NotImplemented { get; init; }
     public bool UncertainState { get; init; }
     public bool ServerActionRequired { get; init; }
+    /// <summary>True when desired state already present — no mutation performed.</summary>
+    public bool NoChange { get; init; }
+    /// <summary>LOCAL_CONFIG_VERIFIED but client path not yet confirmed.</summary>
+    public bool EndToEndNotVerified { get; init; }
 }
 
 public interface IRepairOperation

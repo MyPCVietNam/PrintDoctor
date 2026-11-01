@@ -1,8 +1,22 @@
-# DEFECT-FIX-MATRIX — P1.1 + HF1 + HF2 + corrections + P2 RC1
+# DEFECT-FIX-MATRIX — P1.1 + HF1 + HF2 + corrections + P2 RC1 + P2.1 RC2
 
 Baseline: PR #1 `1647875`. PR #2 branch `fix/p11-diagnostic-accuracy-safe-repair`.
 Final-two baseline HEAD: `8cf4845` → `0962972`.
-P2 branch: `cursor/p2-rc1-field-pilot-e81e` from `0962972`. Version **1.2.0-RC1**.
+P2 branch: `cursor/p2-rc1-field-pilot-e81e` @ `f31a7df`. Version **1.2.0-RC1**.
+P2.1 branch: `cursor/p21-simulation-repair-hardening-e81e`. Version **1.2.1-RC2**.
+
+## P2.1 Simulation + Repair Hardening (v1.2.1-RC2)
+
+| Defect ID | Severity | Status | File/function | After | Test | Result | Remaining risk |
+|-----------|----------|--------|---------------|-------|------|--------|----------------|
+| P21-001 Preexisting rule delete | CRITICAL | FIXED | `OwnedFirewallRuleRepair` | Delete only if `_createdInThisTransaction` + fingerprint match | P21_001_* | UNIT_PASS | Live Win mutation lab |
+| P21-002 Incomplete Verify | HIGH | FIXED | `FirewallRemoteAddress.ExactMatch` | Exact RemoteAddress/Profile; no regex widen | P21_002_* | UNIT_PASS | — |
+| P21-003 Host substring | HIGH | FIXED | `NetworkRootCauseEngine.TargetsMatch` | Exact IP/hostname | P21_003_* | UNIT_PASS | — |
+| P21-004 Repair wiring | HIGH | FIXED | DecisionEngine + MainViewModel list | FW-OWNED-SMB445/SHA48631; ListBox select | P21 sim + UI | UNIT_PASS | Field UX |
+| P21-005 Tx lock | HIGH | FIXED | `MachineRepairLock` | Cross-process lock before Apply | concurrent blocked | UNIT_PASS | — |
+| Sim 88 fixtures | HIGH | INTEGRATED | `SimulationScenarioMapper` + xUnit | Real engines, no fake oracle PASS | P21_Simulation_* | UNIT_PASS | Witness BLOCKED |
+
+FIELD_VALIDATION_PENDING. Not FIELD/PRODUCTION READY.
 
 ## P2 Field Pilot (v1.2.0-RC1)
 

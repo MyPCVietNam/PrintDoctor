@@ -459,6 +459,13 @@ public sealed class DecisionEngine
         {
             if (probe.Tcp445 == ProbeOutcome.Fail)
             {
+                // Do NOT auto-open firewall solely because a remote probe failed.
+                // Owned SMB repair only when THIS machine is the server and LanmanServer is running
+                // (listener expected) — still requires user consent; never opens RemoteAddress=Any.
+                var lanmanUp = snap.Services.Any(s =>
+                    s.Name.Equals("LanmanServer", StringComparison.OrdinalIgnoreCase)
+                    && s.Status.Equals("Running", StringComparison.OrdinalIgnoreCase));
+                var serverOwned = snap.Role == MachineRole.Server && lanmanUp;
                 findings.Add(new Finding
                 {
                     Id = "SMB-001",
@@ -469,7 +476,11 @@ public sealed class DecisionEngine
                     Confidence = 0.8,
                     Category = "SMB",
                     PossibleCauses = new[] { "Network path", "Firewall", "LanmanServer down", "Infrastructure isolation" },
-                    RecommendedActions = new[] { "Correlate with server listener and firewall", "Distinguish auth vs network" },
+                    RecommendedActions = serverOwned
+                        ? new[] { "Confirm listener + Private profile", "Optional owned MyPC.PrintDoctor.SMB445.Private (LocalSubnet only)" }
+                        : new[] { "Correlate with server listener and firewall", "Distinguish auth vs network — do not open ports on client" },
+                    RepairId = serverOwned ? "FW-OWNED-SMB445" : null,
+                    RepairOwner = serverOwned ? RepairOwnerRole.LocalServer : RepairOwnerRole.ServerActionRequired,
                     VerificationMethod = "TCP 445 + service + firewall"
                 });
             }
@@ -635,8 +646,15 @@ public sealed class DecisionEngine
                 Confidence = 0.9,
                 Category = "ShaPrint",
                 PossibleCauses = new[] { "Crash after login", "Startup task missing", "User exited tray app" },
-                RecommendedActions = new[] { "Start ShaPrint manually and retest endpoints", "Do not uninstall automatically" },
-                VerificationMethod = "Process list + TCP 48631"
+                RecommendedActions = new[]
+                {
+                    "Start verified ShaPrint executable only",
+                    "Do not open firewall before a listener exists",
+                    "Do not uninstall/reinstall automatically"
+                },
+                RepairId = snap.Role == MachineRole.Server ? "SHA-START-PROCESS" : null,
+                RepairOwner = snap.Role == MachineRole.Server ? RepairOwnerRole.LocalServer : RepairOwnerRole.ServerActionRequired,
+                VerificationMethod = "Process list + TCP 48631 (not IPPS PASS)"
             });
         }
 
@@ -670,8 +688,30 @@ public sealed class DecisionEngine
                     Confidence = 0.8,
                     Category = "ShaPrint",
                     PossibleCauses = new[] { "Sharing not started", "Port conflict", "Failed bind" },
-                    RecommendedActions = new[] { "Inspect ShaPrint logs if accessible", "Check port ownership" },
+                    RecommendedActions = new[] { "Inspect ShaPrint logs if accessible", "Check port ownership — do not open firewall without listener" },
                     VerificationMethod = "netstat/Get-NetTCPConnection"
+                });
+            }
+            else if (snap.Role == MachineRole.Server
+                     && snap.ShaPrint.ListeningEndpoints.Any(e =>
+                         e.Contains("48631", StringComparison.OrdinalIgnoreCase)
+                         && !e.Contains("FOREIGN", StringComparison.OrdinalIgnoreCase)))
+            {
+                // Listener present on server — owned inbound rule is eligible (user consent still required).
+                findings.Add(new Finding
+                {
+                    Id = "SHA-004",
+                    Title = "ShaPrint IPPS listener present — owned firewall rule may be required",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Warning,
+                    Evidence = "TCP 48631 listening; offer MyPC.PrintDoctor.ShaPrint48631.Private (Private/LocalSubnet only)",
+                    Confidence = 0.7,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "Inbound firewall filter", "Profile mismatch" },
+                    RecommendedActions = new[] { "Create owned rule only after confirming Private LAN", "Never open TCP 48632 to LAN" },
+                    RepairId = "FW-OWNED-SHA48631",
+                    RepairOwner = RepairOwnerRole.LocalServer,
+                    VerificationMethod = "Rule re-read + client TCP 48631 (still not IPPS PASS)"
                 });
             }
         }
@@ -690,7 +730,8 @@ public sealed class DecisionEngine
                     Confidence = 0.75,
                     Category = "ShaPrint",
                     PossibleCauses = new[] { "Process down", "Not listening", "Port blocked", "No route" },
-                    RecommendedActions = new[] { "Separate process/listen/firewall/route causes", "Avoid blaming ShaPrint without evidence" },
+                    RecommendedActions = new[] { "Separate process/listen/firewall/route causes", "Avoid blaming ShaPrint without evidence", "SERVER_ACTION_REQUIRED for inbound firewall" },
+                    RepairOwner = RepairOwnerRole.ServerActionRequired,
                     VerificationMethod = "Local listen check + remote TCP probe"
                 });
             }

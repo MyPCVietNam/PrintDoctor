@@ -114,6 +114,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool IsBusy { get; private set; }
 
     public ObservableCollection<FindingRow> Findings { get; } = new();
+    public ObservableCollection<RepairChoiceRow> AvailableRepairs { get; } = new();
+    private RepairChoiceRow? _selectedRepair;
+    public RepairChoiceRow? SelectedRepair
+    {
+        get => _selectedRepair;
+        set { _selectedRepair = value; OnPropertyChanged(); }
+    }
 
     public ICommand ScanCommand { get; }
     public ICommand ShowCausesCommand { get; }
@@ -166,9 +173,30 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     Status = rc.Status.ToString().ToUpperInvariant(),
                     Title = $"{rc.CaseId} — {rc.Title}",
                     Evidence = (rc.Evidence ?? "") + " | " + (rc.RecommendedAction ?? "")
+                        + $" | evidence={rc.EvidenceLevel}"
                         + (rc.InfrastructureActionRequired ? " | INFRASTRUCTURE_ACTION_REQUIRED" : "")
+                        + (rc.InfrastructureInvestigationRecommended ? " | INFRASTRUCTURE_INVESTIGATION_RECOMMENDED" : "")
                 });
             }
+
+            AvailableRepairs.Clear();
+            SelectedRepair = null;
+            foreach (var f in snap.Findings
+                         .Where(x => !string.IsNullOrWhiteSpace(x.RepairId)
+                                     && x.RepairOwner is not RepairOwnerRole.ServerActionRequired and not RepairOwnerRole.None)
+                         .GroupBy(x => x.RepairId!, StringComparer.OrdinalIgnoreCase)
+                         .Select(g => g.First()))
+            {
+                AvailableRepairs.Add(new RepairChoiceRow
+                {
+                    RepairId = f.RepairId!,
+                    Title = f.Title,
+                    Evidence = f.Evidence,
+                    Owner = f.RepairOwner.ToString()
+                });
+            }
+            if (AvailableRepairs.Count == 1)
+                SelectedRepair = AvailableRepairs[0];
 
             if (Findings.Count == 0)
             {
@@ -208,13 +236,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private async Task SafeRepairAsync()
     {
         if (_lastSnapshot is null) return;
-        var repairable = _lastSnapshot.Findings
-            .Where(f => !string.IsNullOrWhiteSpace(f.RepairId)
-                        && f.RepairOwner is not RepairOwnerRole.ServerActionRequired and not RepairOwnerRole.None)
-            .GroupBy(f => f.RepairId!, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First())
-            .ToList();
-        if (repairable.Count == 0)
+        if (AvailableRepairs.Count == 0)
         {
             var serverOnly = _lastSnapshot.Findings.Any(f => f.RepairOwner == RepairOwnerRole.ServerActionRequired);
             StatusText = serverOnly
@@ -225,34 +247,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        // Never auto-pick the first repair when multiple are available — user must choose.
-        Finding? pick = null;
-        if (repairable.Count == 1)
+        // Explicit list selection — never auto-pick first when multiple repairs exist.
+        if (SelectedRepair is null || string.IsNullOrWhiteSpace(SelectedRepair.RepairId))
         {
-            pick = repairable[0];
-        }
-        else
-        {
-            foreach (var candidate in repairable)
-            {
-                var ans = MessageBox.Show(
-                    $"Chọn repair này?\n\n{candidate.RepairId}\n{candidate.Title}\n\n{candidate.Evidence}",
-                    Labels.SafeRepair,
-                    MessageBoxButton.YesNoCancel,
-                    MessageBoxImage.Question);
-                if (ans == MessageBoxResult.Cancel) { StatusText = Labels.RepairCancelled; return; }
-                if (ans == MessageBoxResult.Yes) { pick = candidate; break; }
-            }
-            if (pick is null)
-            {
-                StatusText = "Không chọn repair — từ chối Apply (không tự chọn repair đầu tiên).";
-                return;
-            }
+            StatusText = "Chọn một repair trong danh sách trước khi Apply (không tự chọn).";
+            MessageBox.Show(StatusText, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
         }
 
-        if (pick.RepairOwner == RepairOwnerRole.ServerActionRequired || string.IsNullOrWhiteSpace(pick.RepairId))
+        var pick = _lastSnapshot.Findings.FirstOrDefault(f =>
+                       string.Equals(f.RepairId, SelectedRepair.RepairId, StringComparison.OrdinalIgnoreCase)
+                       && f.RepairOwner is not RepairOwnerRole.ServerActionRequired and not RepairOwnerRole.None)
+                   ?? _lastSnapshot.Findings.FirstOrDefault(f =>
+                       string.Equals(f.RepairId, SelectedRepair.RepairId, StringComparison.OrdinalIgnoreCase));
+        if (pick is null || pick.RepairOwner == RepairOwnerRole.ServerActionRequired || string.IsNullOrWhiteSpace(pick.RepairId))
         {
-            StatusText = "SERVER_ACTION_REQUIRED: run PrintDoctor on the server — local client firewall will not be modified for a remote inbound issue.";
+            StatusText = "SERVER_ACTION_REQUIRED / invalid selection.";
             MessageBox.Show(StatusText, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -439,6 +449,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             "SVC-SPOOLER-START" => new ServiceStartRepair("Spooler", "SVC-SPOOLER-START", "Start Print Spooler", svc, elev),
             "SVC-LANMANSERVER-START" => new ServiceStartRepair("LanmanServer", "SVC-LANMANSERVER-START", "Start LanmanServer", svc, elev),
             "SVC-LANMANWORKSTATION-START" => new ServiceStartRepair("LanmanWorkstation", "SVC-LANMANWORKSTATION-START", "Start LanmanWorkstation", svc, elev),
+            "SHA-START-PROCESS" => new NotImplementedRepair("SHA-START-PROCESS", "ShaPrint process start — verify executable path before enabling (NOT_IMPLEMENTED)"),
             _ => new NotImplementedRepair(repairId, "Unknown repair")
         };
 
@@ -517,6 +528,15 @@ public sealed class FindingRow
     public string Status { get; init; } = "";
     public string Title { get; init; } = "";
     public string Evidence { get; init; } = "";
+}
+
+public sealed class RepairChoiceRow
+{
+    public string RepairId { get; init; } = "";
+    public string Title { get; init; } = "";
+    public string Evidence { get; init; } = "";
+    public string Owner { get; init; } = "";
+    public override string ToString() => $"{RepairId} — {Title}";
 }
 
 public sealed class UiLabels
