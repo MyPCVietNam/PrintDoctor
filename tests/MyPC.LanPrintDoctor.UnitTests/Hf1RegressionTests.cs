@@ -75,7 +75,8 @@ public class Hf1RegressionTests
         };
         var elev = new FakeElevationService { IsAdmin = true };
         var op = new FirewallIcmpEchoRepair(fw, elev);
-        var exec = new RepairExecutor(new RepairJournal(Temp("rb")));
+        var journalRb = new RepairJournal(Temp("rb"));
+        var exec = new RepairExecutor(journalRb, journalRb.DirectoryPath);
         // Force verify fail after apply by clearing scoped fields via custom path: apply then manually break verify
         await op.CollectEvidenceAsync();
         var bak = await op.BackupAsync();
@@ -87,6 +88,7 @@ public class Hf1RegressionTests
         Assert.False(cur.Enabled);
         Assert.Equal("Domain", cur.Profiles);
         Assert.Equal("Any", cur.RemoteAddresses);
+        _ = exec;
     }
 
     [Fact]
@@ -95,7 +97,8 @@ public class Hf1RegressionTests
         var fw = new FakeFirewallInspector { IcmpEnableResult = false };
         var elev = new FakeElevationService { IsAdmin = true };
         var op = new FirewallIcmpEchoRepair(fw, elev);
-        var result = await new RepairExecutor(new RepairJournal(Temp("psfail"))).ExecuteAsync(op, true);
+        var journal = new RepairJournal(Temp("psfail"));
+        var result = await new RepairExecutor(journal, journal.DirectoryPath).ExecuteAsync(op, true);
         Assert.NotEqual(DiagnosticStatus.Pass, result.Status);
         Assert.False(result.Verified);
     }
@@ -174,7 +177,8 @@ public class Hf1RegressionTests
 
         var fw = new FakeFirewallInspector();
         var op = new FirewallIcmpEchoRepair(fw, new FakeElevationService { IsAdmin = true });
-        var result = await new RepairExecutor(new RepairJournal(Temp("own")))
+        var journal = new RepairJournal(Temp("own"));
+        var result = await new RepairExecutor(journal, journal.DirectoryPath)
             .ExecuteAsync(op, true, localRole: MachineRole.Client, findingOwner: RepairOwnerRole.ServerActionRequired);
         Assert.True(result.ServerActionRequired);
         Assert.False(result.Applied);

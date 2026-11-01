@@ -20,7 +20,8 @@ public class SafeRepairIntegrationTests
         services.Services["Spooler"] = new WindowsServiceInfo { Name = "Spooler", Status = "Stopped", StartType = "Automatic" };
         var elev = new FakeElevationService { IsAdmin = true };
         var op = new ServiceStartRepair("Spooler", "SVC-SPOOLER-START", "Start Spooler", services, elev);
-        var exec = new RepairExecutor(new RepairJournal(TempDir()));
+        var journal = new RepairJournal(TempDir());
+        var exec = new RepairExecutor(journal, journal.DirectoryPath);
         var result = await exec.ExecuteAsync(op, userConfirmed: false);
         Assert.Equal(DiagnosticStatus.Blocked, result.Status);
         Assert.False(result.Applied);
@@ -34,7 +35,8 @@ public class SafeRepairIntegrationTests
         services.Services["Spooler"] = new WindowsServiceInfo { Name = "Spooler", Status = "Stopped", StartType = "Automatic" };
         var elev = new FakeElevationService { IsAdmin = true };
         var op = new ServiceStartRepair("Spooler", "SVC-SPOOLER-START", "Start Spooler", services, elev);
-        var exec = new RepairExecutor(new RepairJournal(TempDir()));
+        var journal = new RepairJournal(TempDir());
+        var exec = new RepairExecutor(journal, journal.DirectoryPath);
         var result = await exec.ExecuteAsync(op, userConfirmed: true);
         Assert.True(result.Applied);
         Assert.True(result.Verified);

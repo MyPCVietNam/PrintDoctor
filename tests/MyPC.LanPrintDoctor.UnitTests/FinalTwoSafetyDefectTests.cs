@@ -146,7 +146,7 @@ public class FinalTwoSafetyDefectTests
         File.WriteAllText(Path.Combine(dir, "repair-journal.json"), "\r\n");
         var j = new RepairJournal(dir);
         var fw = new FakeFirewallInspector();
-        var result = await new RepairExecutor(j).ExecuteAsync(
+        var result = await new RepairExecutor(j, j.DirectoryPath).ExecuteAsync(
             new FirewallIcmpEchoRepair(fw, new FakeElevationService { IsAdmin = true }), userConfirmed: true);
         Assert.Equal(DiagnosticStatus.Blocked, result.Status);
         Assert.Contains("CORRUPT_JOURNAL", result.Message ?? "", StringComparison.Ordinal);

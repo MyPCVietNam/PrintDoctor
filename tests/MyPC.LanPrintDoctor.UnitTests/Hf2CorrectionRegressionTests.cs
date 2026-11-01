@@ -69,7 +69,7 @@ public class Hf2CorrectionRegressionTests
 
         var fw = new FakeFirewallInspector();
         var op = new FirewallIcmpEchoRepair(fw, new FakeElevationService { IsAdmin = true });
-        var result = await new RepairExecutor(j).ExecuteAsync(op, userConfirmed: true);
+        var result = await new RepairExecutor(j, j.DirectoryPath).ExecuteAsync(op, userConfirmed: true);
         Assert.Equal(DiagnosticStatus.Blocked, result.Status);
         Assert.False(result.Applied);
         Assert.Contains("UNCERTAIN_STATE", result.Message ?? "", StringComparison.Ordinal);
@@ -83,7 +83,7 @@ public class Hf2CorrectionRegressionTests
         File.WriteAllText(Path.Combine(dir, "repair-journal.json"), "CORRUPT<<<");
         var j = new RepairJournal(dir);
         var fw = new FakeFirewallInspector();
-        var result = await new RepairExecutor(j).ExecuteAsync(
+        var result = await new RepairExecutor(j, j.DirectoryPath).ExecuteAsync(
             new FirewallIcmpEchoRepair(fw, new FakeElevationService { IsAdmin = true }), userConfirmed: true);
         Assert.Equal(DiagnosticStatus.Blocked, result.Status);
         Assert.Contains("CORRUPT_JOURNAL", result.Message ?? "", StringComparison.Ordinal);

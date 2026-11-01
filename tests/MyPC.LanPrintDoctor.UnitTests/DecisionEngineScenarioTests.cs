@@ -207,7 +207,8 @@ public class DecisionEngineScenarioTests
                 rolled = true;
                 return Task.FromResult(new RollbackResult { Attempted = true, Succeeded = true, Verified = true });
             });
-        var exec = new RepairExecutor(new RepairJournal(Path.Combine(Path.GetTempPath(), "lpd-ut-" + Guid.NewGuid().ToString("N"))));
+        var journal = new RepairJournal(Path.Combine(Path.GetTempPath(), "lpd-ut-" + Guid.NewGuid().ToString("N")));
+        var exec = new RepairExecutor(journal, journal.DirectoryPath);
         var result = await exec.ExecuteAsync(op, userConfirmed: true);
         Assert.True(applied);
         Assert.True(rolled);
@@ -227,7 +228,8 @@ public class DecisionEngineScenarioTests
                 rolled = true;
                 return Task.FromResult(new RollbackResult { Attempted = true, Succeeded = true, Verified = true });
             });
-        var exec = new RepairExecutor(new RepairJournal(Path.Combine(Path.GetTempPath(), "lpd-ut-" + Guid.NewGuid().ToString("N"))));
+        var journal = new RepairJournal(Path.Combine(Path.GetTempPath(), "lpd-ut-" + Guid.NewGuid().ToString("N")));
+        var exec = new RepairExecutor(journal, journal.DirectoryPath);
         var result = await exec.ExecuteAsync(op, userConfirmed: true);
         Assert.True(rolled);
         Assert.False(result.Verified);

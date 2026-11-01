@@ -31,7 +31,8 @@ public class P11RegressionTests
     public async Task B01_NotImplementedRepair_NeverReportsSuccess()
     {
         var op = new NotImplementedRepair("FW-FAKE", "Fake");
-        var exec = new RepairExecutor(new RepairJournal(TempDir("ni")));
+        var journal = new RepairJournal(TempDir("ni"));
+        var exec = new RepairExecutor(journal, journal.DirectoryPath);
         var result = await exec.ExecuteAsync(op, userConfirmed: true);
         Assert.True(result.NotImplemented);
         Assert.False(result.Applied);
@@ -48,7 +49,8 @@ public class P11RegressionTests
         var elev = new FakeElevationService { IsAdmin = true };
         var op = new FirewallIcmpEchoRepair(fw, elev);
         Assert.True(op.IsImplemented);
-        var exec = new RepairExecutor(new RepairJournal(TempDir("icmp")));
+        var journal = new RepairJournal(TempDir("icmp"));
+        var exec = new RepairExecutor(journal, journal.DirectoryPath);
         var result = await exec.ExecuteAsync(op, userConfirmed: true);
         Assert.True(result.Applied);
         Assert.True(result.Verified);
@@ -64,7 +66,8 @@ public class P11RegressionTests
         var op = new FilePrintShareRepair(fw, elev);
         Assert.Equal("FW-FILE-PRINT-SHARE", op.OperationId);
         Assert.NotEqual("FW-ICMP-ECHO", op.OperationId);
-        var exec = new RepairExecutor(new RepairJournal(TempDir("fps")));
+        var journal = new RepairJournal(TempDir("fps"));
+        var exec = new RepairExecutor(journal, journal.DirectoryPath);
         var result = await exec.ExecuteAsync(op, userConfirmed: true);
         Assert.True(result.Applied);
         Assert.Equal(0, fw.IcmpEnableCalls);
@@ -78,7 +81,8 @@ public class P11RegressionTests
         services.Services["Spooler"] = new WindowsServiceInfo { Name = "Spooler", Status = "Stopped", StartType = "Automatic" };
         // Force verify fail after apply by clearing after start — use Scriptable instead:
         var op = new IrreversibleFailVerifyRepair();
-        var exec = new RepairExecutor(new RepairJournal(TempDir("norb")));
+        var journal = new RepairJournal(TempDir("norb"));
+        var exec = new RepairExecutor(journal, journal.DirectoryPath);
         var result = await exec.ExecuteAsync(op, userConfirmed: true);
         Assert.True(result.Applied);
         Assert.False(result.Verified);
@@ -94,7 +98,8 @@ public class P11RegressionTests
         var op = new TokenCaptureRepair(t => seen = t);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
-        var exec = new RepairExecutor(new RepairJournal(TempDir("tok")));
+        var journal = new RepairJournal(TempDir("tok"));
+        var exec = new RepairExecutor(journal, journal.DirectoryPath);
         var result = await exec.ExecuteAsync(op, userConfirmed: true, cts.Token);
         // Apply may throw OperationCanceled; if backup existed rollback uses None.
         // TokenCaptureRepair backs up then throws on apply so rollback runs with None.
