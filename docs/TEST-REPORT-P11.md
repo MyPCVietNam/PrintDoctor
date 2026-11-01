@@ -2,9 +2,9 @@
 
 | Gate | Result |
 |------|--------|
-| UNIT_PASS | PASS (86+) |
-| INTEGRATION_PASS | PASS (4 + HF2 PowerShell fixtures; no firewall mutation in CI) |
-| WINDOWS_CI_PASS | PENDING this push |
+| UNIT_PASS | PASS (86) |
+| INTEGRATION_PASS | PASS (9 = 4 prior + 5 HF2 PowerShell fixtures; no firewall mutation in CI) |
+| WINDOWS_CI_PASS | PASS — https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41309438663 |
 | WIN10_LAB_NOT_RUN | BLOCKED |
 | WIN11_LAB_NOT_RUN | BLOCKED |
 | PHYSICAL_LAN_NOT_RUN | BLOCKED |
