@@ -1,0 +1,558 @@
+using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
+using MyPC.LanPrintDoctor.Abstractions.Network;
+using MyPC.LanPrintDoctor.Abstractions.ShaPrint;
+using MyPC.LanPrintDoctor.Core.Models;
+
+namespace MyPC.LanPrintDoctor.Core.Engine;
+
+public sealed class DecisionEngine
+{
+    public IReadOnlyList<Finding> Evaluate(DiagnosticSnapshot snap)
+    {
+        var findings = new List<Finding>();
+        EvaluateNetwork(snap, findings);
+        EvaluateFirewall(snap, findings);
+        EvaluateServices(snap, findings);
+        EvaluateSmb(snap, findings);
+        EvaluatePrinters(snap, findings);
+        EvaluateShaPrint(snap, findings);
+        return findings;
+    }
+
+    private static void EvaluateNetwork(DiagnosticSnapshot snap, List<Finding> findings)
+    {
+        var upAdapters = snap.Adapters.Where(a => a.IsUp && a.Kind != AdapterKind.Loopback).ToList();
+        if (upAdapters.Count == 0)
+        {
+            findings.Add(new Finding
+            {
+                Id = "LAN-000",
+                Title = "No active network adapter",
+                Severity = Severity.Critical,
+                Status = DiagnosticStatus.Fail,
+                Evidence = "No non-loopback adapter reports IsUp=true.",
+                Confidence = 0.95,
+                Category = "Network",
+                PossibleCauses = new[] { "NIC disabled", "Driver failure", "Cable/Wi-Fi disconnect" },
+                RecommendedActions = new[] { "Check physical link", "Review Device Manager", "Do not reset stack yet" },
+                VerificationMethod = "Re-scan adapters after hardware check"
+            });
+        }
+
+        var target = snap.TargetHost;
+        var icmp = snap.Probes.Where(p => p.Protocol == ProbeProtocol.Icmp).ToList();
+        var tcp = snap.Probes.Where(p => p.Protocol == ProbeProtocol.Tcp).ToList();
+        // Target-scoped probes — local/gateway success must not mask target ICMP failure.
+        var icmpToTarget = string.IsNullOrWhiteSpace(target)
+            ? Array.Empty<ConnectivityProbeResult>()
+            : icmp.Where(p => string.Equals(p.Target, target, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var tcpToTarget = string.IsNullOrWhiteSpace(target)
+            ? Array.Empty<ConnectivityProbeResult>()
+            : tcp.Where(p => string.Equals(p.Target, target, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var icmpFail = icmpToTarget.Length > 0 && icmpToTarget.All(p => !p.Success);
+        var icmpPass = icmpToTarget.Any(p => p.Success);
+        var tcpPass = tcpToTarget.Any(p => p.Success);
+        var tcpFail = tcpToTarget.Length > 0 && tcpToTarget.All(p => !p.Success);
+
+        if (!string.IsNullOrWhiteSpace(target))
+        {
+            if (icmpFail && tcpPass)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "LAN-002",
+                    Title = "ICMP blocked suspected",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Warning,
+                    Evidence = $"ICMP to {target} failed while at least one TCP probe succeeded: {string.Join(", ", tcpToTarget.Where(t => t.Success).Select(t => t.Port?.ToString() ?? "?"))}",
+                    Confidence = 0.8,
+                    Category = "Network",
+                    PossibleCauses = new[] { "Windows Firewall ICMP Echo rule disabled", "Third-party firewall ICMP filter", "Router ICMP filter" },
+                    RecommendedActions = new[] { "Inspect ICMP Echo Request inbound rules on target", "Do not treat host as offline" },
+                    RepairId = "FW-ICMP-ECHO",
+                    VerificationMethod = "Re-run ICMP + TCP probes"
+                });
+            }
+            else if (icmpFail && tcpFail)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "LAN-001",
+                    Title = "Server unreachable (ICMP and TCP failed)",
+                    Severity = Severity.Critical,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = $"ICMP and TCP probes to {target} all failed. Not sufficient alone to blame firewall.",
+                    Confidence = 0.7,
+                    Category = "Network",
+                    PossibleCauses = new[]
+                    {
+                        "Host offline or wrong IP",
+                        "Different subnet / gateway",
+                        "ARP/routing failure",
+                        "Switch/AP client isolation",
+                        "Firewall blocking multiple ports",
+                        "NIC/driver issue on server"
+                    },
+                    RecommendedActions = new[]
+                    {
+                        "Compare server/client adapter, gateway, subnet",
+                        "Check ARP/neighbor MAC consistency",
+                        "Verify listeners on server",
+                        "Inspect switch/router if both ends look healthy"
+                    },
+                    VerificationMethod = "Server+client correlation report"
+                });
+            }
+
+            // Subnet check
+            if (upAdapters.Count > 0 && IPLike(snap.TargetHost))
+            {
+                var local = upAdapters.FirstOrDefault(a => a.IPv4Addresses.Count > 0);
+                if (local?.PrefixLength is int prefix)
+                {
+                    var localIp = local.IPv4Addresses[0];
+                    if (!IpMath.SameSubnetPrefix(localIp, prefix, snap.TargetHost!))
+                    {
+                        findings.Add(new Finding
+                        {
+                            Id = "LAN-003",
+                            Title = "Target appears off-subnet",
+                            Severity = Severity.High,
+                            Status = DiagnosticStatus.Fail,
+                            Evidence = $"Local {localIp}/{prefix} vs target {snap.TargetHost}",
+                            Confidence = 0.85,
+                            Category = "Network",
+                            PossibleCauses = new[] { "Wrong IP entered", "VLAN separation", "Stale DHCP lease" },
+                            RecommendedActions = new[] { "Confirm server IP on server console", "Check VLAN/routing", "Do not reset NIC" },
+                            VerificationMethod = "Compare both reports"
+                        });
+                    }
+                }
+
+                var gw = upAdapters.Select(a => a.DefaultGateway).FirstOrDefault(g => !string.IsNullOrWhiteSpace(g));
+                var gwProbe = snap.Probes.FirstOrDefault(p => p.Protocol == ProbeProtocol.Icmp && p.Target == gw);
+                if (gwProbe is { Success: false })
+                {
+                    findings.Add(new Finding
+                    {
+                        Id = "LAN-004",
+                        Title = "Default gateway unreachable",
+                        Severity = Severity.High,
+                        Status = DiagnosticStatus.Fail,
+                        Evidence = $"Gateway {gw} ICMP failed",
+                        Confidence = 0.75,
+                        Category = "Network",
+                        PossibleCauses = new[] { "Wrong gateway", "Router down", "Local L2 issue" },
+                        RecommendedActions = new[] { "Verify gateway on working host", "Check cabling/AP", "Infrastructure may be out of Windows repair scope" },
+                        VerificationMethod = "Gateway ICMP + ARP"
+                    });
+                }
+            }
+        }
+
+        // Multi-adapter / VPN
+        if (upAdapters.Count(a => a.Kind is AdapterKind.Ethernet or AdapterKind.WiFi) > 1)
+        {
+            findings.Add(new Finding
+            {
+                Id = "LAN-005",
+                Title = "Multiple active physical adapters",
+                Severity = Severity.Low,
+                Status = DiagnosticStatus.Warning,
+                Evidence = string.Join("; ", upAdapters.Select(a => $"{a.Name}/{a.Kind}/{a.IPv4Addresses.FirstOrDefault()}")),
+                Confidence = 0.6,
+                Category = "Network",
+                PossibleCauses = new[] { "Asymmetric routing", "Wrong metric" },
+                RecommendedActions = new[] { "Confirm preferred adapter metric", "Disable unused path temporarily for test only with approval" },
+                VerificationMethod = "Route table review"
+            });
+        }
+
+        if (upAdapters.Any(a => a.Kind == AdapterKind.Vpn))
+        {
+            findings.Add(new Finding
+            {
+                Id = "LAN-006",
+                Title = "VPN adapter active",
+                Severity = Severity.Medium,
+                Status = DiagnosticStatus.Warning,
+                Evidence = string.Join(", ", upAdapters.Where(a => a.Kind == AdapterKind.Vpn).Select(a => a.Name)),
+                Confidence = 0.7,
+                Category = "Network",
+                PossibleCauses = new[] { "VPN hijacking default route", "Split-tunnel misconfig" },
+                RecommendedActions = new[] { "Test LAN print with VPN disconnected (user-approved)", "Inspect routes" },
+                VerificationMethod = "Route + connectivity retest"
+            });
+        }
+
+        // IP conflict soft signal
+        if (!string.IsNullOrWhiteSpace(snap.TargetHost))
+        {
+            var neighbors = snap.Neighbors.Where(n => string.Equals(n.IpAddress, snap.TargetHost, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (neighbors.Count > 1)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "LAN-007",
+                    Title = "Possible IP conflict (multiple neighbor entries)",
+                    Severity = Severity.High,
+                    Status = DiagnosticStatus.Warning,
+                    Evidence = string.Join(" | ", neighbors.Select(n => $"{n.MacAddress}/{n.State}")),
+                    Confidence = 0.55,
+                    Category = "Network",
+                    PossibleCauses = new[] { "Duplicate static IP", "Stale ARP", "DHCP overlap" },
+                    RecommendedActions = new[] { "Compare server-reported MAC with client-observed MAC", "Do not conclude from a single ARP entry" },
+                    VerificationMethod = "Server/client MAC correlation over time"
+                });
+            }
+        }
+
+        if (icmpPass && !findings.Any(f => f.Id.StartsWith("LAN-", StringComparison.Ordinal)))
+        {
+            // keep quiet unless useful
+        }
+    }
+
+    private static void EvaluateFirewall(DiagnosticSnapshot snap, List<Finding> findings)
+    {
+        foreach (var profile in snap.FirewallProfiles)
+        {
+            if (profile.Profile == Abstractions.Firewall.FirewallProfileKind.Public && profile.Enabled)
+            {
+                var hasPrivateAlt = snap.FirewallProfiles.Any(p => p.Profile == Abstractions.Firewall.FirewallProfileKind.Private);
+                var adaptersPublic = snap.Adapters.Any(a => a.Category == NetworkCategory.Public && a.IsUp);
+                if (adaptersPublic)
+                {
+                    findings.Add(new Finding
+                    {
+                        Id = "FW-001",
+                        Title = "Network profile is Public",
+                        Severity = Severity.High,
+                        Status = DiagnosticStatus.Warning,
+                        Evidence = "Active adapter categorized as Public; File/Printer Sharing often restricted.",
+                        Confidence = 0.85,
+                        Category = "Firewall",
+                        PossibleCauses = new[] { "Network reclassified after reconnect", "User/policy change" },
+                        RecommendedActions = new[] { "Confirm trusted LAN", "Offer Private profile change only with user consent" },
+                        RepairId = "NET-PROFILE-PRIVATE",
+                        VerificationMethod = "Re-read NetworkCategory + sharing rules"
+                    });
+                }
+            }
+
+            if (profile.ManagedByPolicy == true)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "FW-002",
+                    Title = "Firewall managed by Group Policy",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Blocked,
+                    Evidence = $"{profile.Profile} appears policy-managed",
+                    Confidence = 0.7,
+                    Category = "Firewall",
+                    PossibleCauses = new[] { "Domain GPO", "MDM policy" },
+                    RecommendedActions = new[] { "Escalate to domain admin", "Do not fight policy from workstation tool" },
+                    VerificationMethod = "gpresult / security center"
+                });
+            }
+        }
+
+        if (snap.ThirdPartySecurity.Count > 0)
+        {
+            findings.Add(new Finding
+            {
+                Id = "FW-003",
+                Title = "Third-party security product detected",
+                Severity = Severity.Medium,
+                Status = DiagnosticStatus.Warning,
+                Evidence = string.Join(", ", snap.ThirdPartySecurity.Select(p => p.Name)),
+                Confidence = 0.65,
+                Category = "Firewall",
+                PossibleCauses = new[] { "Third-party firewall overriding Windows rules" },
+                RecommendedActions = new[] { "Review third-party firewall logs", "Do not disable Windows Firewall wholesale" },
+                VerificationMethod = "Vendor console + probe retest"
+            });
+        }
+
+        var icmpRules = snap.FirewallRules.Where(r =>
+            (r.Name?.Contains("Echo", StringComparison.OrdinalIgnoreCase) ?? false) ||
+            (r.Grouping?.Contains("File and Printer Sharing", StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
+        if (icmpRules.Any(r => !r.Enabled && r.Direction.Contains("In", StringComparison.OrdinalIgnoreCase)))
+        {
+            findings.Add(new Finding
+            {
+                Id = "FW-004",
+                Title = "Relevant inbound sharing/ICMP rule disabled",
+                Severity = Severity.Medium,
+                Status = DiagnosticStatus.Warning,
+                Evidence = string.Join("; ", icmpRules.Where(r => !r.Enabled).Select(r => r.Name)),
+                Confidence = 0.75,
+                Category = "Firewall",
+                PossibleCauses = new[] { "Manual disable", "Profile mismatch", "Security software" },
+                RecommendedActions = new[] { "Enable scoped ICMP/File and Printer Sharing rules for Private/LocalSubnet" },
+                RepairId = "FW-ICMP-ECHO",
+                VerificationMethod = "Rule dump + ICMP probe"
+            });
+        }
+    }
+
+    private static void EvaluateServices(DiagnosticSnapshot snap, List<Finding> findings)
+    {
+        foreach (var svc in snap.Services)
+        {
+            // Unknown/Missing means inspector could not read — do not treat as stopped.
+            if (svc.Status.Equals("Unknown", StringComparison.OrdinalIgnoreCase) ||
+                svc.Status.Equals("Missing", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var stopped = !svc.Status.Equals("Running", StringComparison.OrdinalIgnoreCase);
+            if (!stopped) continue;
+
+            if (svc.Name.Equals("Spooler", StringComparison.OrdinalIgnoreCase))
+            {
+                findings.Add(new Finding
+                {
+                    Id = "PRN-001",
+                    Title = "Print Spooler stopped",
+                    Severity = Severity.Critical,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = $"Service Spooler status={svc.Status}, start={svc.StartType}",
+                    Confidence = 0.95,
+                    Category = "Printing",
+                    PossibleCauses = new[] { "Crash", "Manual stop", "Dependency failure" },
+                    RecommendedActions = new[] { "Start Spooler with user awareness of in-flight jobs" },
+                    RepairId = "SVC-SPOOLER-START",
+                    VerificationMethod = "Service status + printer enumeration"
+                });
+            }
+            else if (svc.Name.Equals("LanmanServer", StringComparison.OrdinalIgnoreCase))
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-002",
+                    Title = "LanmanServer stopped",
+                    Severity = Severity.Critical,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = $"LanmanServer status={svc.Status}",
+                    Confidence = 0.95,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Service disabled", "Policy", "Dependency" },
+                    RecommendedActions = new[] { "Start LanmanServer if sharing is required" },
+                    RepairId = "SVC-LANMANSERVER-START",
+                    VerificationMethod = "Service status + TCP 445 listen"
+                });
+            }
+            else if (svc.Name.Equals("LanmanWorkstation", StringComparison.OrdinalIgnoreCase))
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-003",
+                    Title = "LanmanWorkstation stopped",
+                    Severity = Severity.High,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = $"LanmanWorkstation status={svc.Status}",
+                    Confidence = 0.95,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Service disabled" },
+                    RecommendedActions = new[] { "Start LanmanWorkstation" },
+                    RepairId = "SVC-LANMANWORKSTATION-START",
+                    VerificationMethod = "Service status + UNC probe"
+                });
+            }
+        }
+    }
+
+    private static void EvaluateSmb(DiagnosticSnapshot snap, List<Finding> findings)
+    {
+        if (snap.SmbConfiguration?.EnableSMB1Protocol == true)
+        {
+            findings.Add(new Finding
+            {
+                Id = "SMB-010",
+                Title = "SMB1 enabled (security risk)",
+                Severity = Severity.High,
+                Status = DiagnosticStatus.Warning,
+                Evidence = "EnableSMB1Protocol=true",
+                Confidence = 0.9,
+                Category = "SMB",
+                PossibleCauses = new[] { "Legacy device requirement" },
+                RecommendedActions = new[] { "Keep SMB1 disabled; this tool will not turn SMB1 on", "Plan migration off SMB1" },
+                VerificationMethod = "Get-SmbServerConfiguration"
+            });
+        }
+
+        if (snap.SmbConfiguration?.EnableInsecureGuestLogons == true)
+        {
+            findings.Add(new Finding
+            {
+                Id = "SMB-011",
+                Title = "Insecure guest logons enabled",
+                Severity = Severity.High,
+                Status = DiagnosticStatus.Warning,
+                Evidence = "EnableInsecureGuestLogons=true",
+                Confidence = 0.9,
+                Category = "SMB",
+                PossibleCauses = new[] { "Legacy workaround" },
+                RecommendedActions = new[] { "Do not turn on insecure guest logons", "Use proper accounts" },
+                VerificationMethod = "SMB client configuration"
+            });
+        }
+
+        if (snap.SmbProbe is { } probe)
+        {
+            if (!probe.Tcp445Open)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-001",
+                    Title = "SMB connection failure (TCP 445)",
+                    Severity = Severity.High,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = probe.Detail ?? "TCP 445 closed/filtered",
+                    Confidence = 0.8,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Network path", "Firewall", "LanmanServer down", "Infrastructure isolation" },
+                    RecommendedActions = new[] { "Correlate with server listener and firewall", "Distinguish auth vs network" },
+                    VerificationMethod = "TCP 445 + service + firewall"
+                });
+            }
+            else if (probe.Tcp445Open && !probe.UncReachable)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-004",
+                    Title = "TCP 445 open but UNC not reachable",
+                    Severity = Severity.High,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = probe.Detail ?? "UNC probe failed",
+                    Confidence = 0.7,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Authentication", "Share permissions", "Name resolution", "SMB signing/policy" },
+                    RecommendedActions = new[] { "Check event logs for auth failures", "Do not disable SMB signing" },
+                    VerificationMethod = "Authenticated share list"
+                });
+            }
+        }
+
+        if (snap.SharingToggles is { } toggles)
+        {
+            if (!toggles.NetworkDiscovery || !toggles.FileAndPrinterSharing)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-005",
+                    Title = "Network Discovery / File and Printer Sharing disabled",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Warning,
+                    Evidence = $"Discovery={toggles.NetworkDiscovery}, Sharing={toggles.FileAndPrinterSharing}",
+                    Confidence = 0.85,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Public profile", "Manual toggle" },
+                    RecommendedActions = new[] { "Enable for Private profile only when LAN is trusted" },
+                    RepairId = "FW-FILE-PRINT-SHARE",
+                    VerificationMethod = "Sharing toggles + browse"
+                });
+            }
+        }
+    }
+
+    private static void EvaluatePrinters(DiagnosticSnapshot snap, List<Finding> findings)
+    {
+        if (snap.Role == MachineRole.Server && snap.Printers.Count == 0)
+        {
+            findings.Add(new Finding
+            {
+                Id = "PRN-002",
+                Title = "Server has no printers",
+                Severity = Severity.High,
+                Status = DiagnosticStatus.Fail,
+                Evidence = "Printer catalog empty on server role scan",
+                Confidence = 0.9,
+                Category = "Printing",
+                PossibleCauses = new[] { "Driver removed", "USB disconnect", "Spooler issue" },
+                RecommendedActions = new[] { "Verify local printer installation on server" },
+                VerificationMethod = "Printer enumeration"
+            });
+        }
+
+        foreach (var p in snap.Printers.Where(x => x.Offline))
+        {
+            findings.Add(new Finding
+            {
+                Id = "PRN-003",
+                Title = $"Printer offline: {p.Name}",
+                Severity = Severity.High,
+                Status = DiagnosticStatus.Fail,
+                Evidence = $"Port={p.PortName}, Driver={p.DriverName}, Jobs={p.JobCount}",
+                Confidence = 0.85,
+                Category = "Printing",
+                PossibleCauses = new[] { "Device powered off", "Bad port", "Network path" },
+                RecommendedActions = new[] { "Check device power/cable", "Validate port", "Distinguish network vs pipeline" },
+                VerificationMethod = "Printer status + test page (user confirmed)"
+            });
+        }
+    }
+
+    private static void EvaluateShaPrint(DiagnosticSnapshot snap, List<Finding> findings)
+    {
+        if (snap.ShaPrint is null)
+            return;
+
+        if (!snap.ShaPrint.Installed)
+            return; // absence is not a finding by itself
+
+        if (snap.ShaPrint.Installed && !snap.ShaPrint.ProcessRunning)
+        {
+            findings.Add(new Finding
+            {
+                Id = "SHA-002",
+                Title = "ShaPrint installed but process not running",
+                Severity = Severity.High,
+                Status = DiagnosticStatus.Fail,
+                Evidence = $"Path={snap.ShaPrint.InstallPath}, Version={snap.ShaPrint.Version}",
+                Confidence = 0.9,
+                Category = "ShaPrint",
+                PossibleCauses = new[] { "Crash after login", "Startup task missing", "User exited tray app" },
+                RecommendedActions = new[] { "Start ShaPrint manually and retest endpoints", "Do not uninstall automatically" },
+                VerificationMethod = "Process list + TCP 48631"
+            });
+        }
+
+        if (snap.ShaPrint.ProcessRunning && snap.ShaPrint.ListeningEndpoints.Count == 0)
+        {
+            findings.Add(new Finding
+            {
+                Id = "SHA-003",
+                Title = "ShaPrint running but not listening expected ports",
+                Severity = Severity.High,
+                Status = DiagnosticStatus.Fail,
+                Evidence = "No listening endpoints observed for 48631/48632/48633",
+                Confidence = 0.8,
+                Category = "ShaPrint",
+                PossibleCauses = new[] { "Sharing not started", "Port conflict", "Failed bind" },
+                RecommendedActions = new[] { "Inspect ShaPrint logs if accessible", "Check port ownership" },
+                VerificationMethod = "netstat/Get-NetTCPConnection"
+            });
+        }
+
+        if (snap.ShaPrintConnectivity is { ServerEndpointReachable: false } && !string.IsNullOrWhiteSpace(snap.TargetHost))
+        {
+            findings.Add(new Finding
+            {
+                Id = "SHA-001",
+                Title = "ShaPrint endpoint unavailable",
+                Severity = Severity.High,
+                Status = DiagnosticStatus.Fail,
+                Evidence = snap.ShaPrintConnectivity.Detail ?? $"TCP {ShaPrintPorts.ServerTcp} unreachable",
+                Confidence = 0.75,
+                Category = "ShaPrint",
+                PossibleCauses = new[] { "Process down", "Not listening", "Port blocked", "No route" },
+                RecommendedActions = new[] { "Separate process/listen/firewall/route causes", "Avoid blaming ShaPrint without evidence" },
+                VerificationMethod = "Local listen check + remote TCP probe"
+            });
+        }
+    }
+
+    private static bool IPLike(string? host)
+        => host is not null && System.Net.IPAddress.TryParse(host, out _);
+}

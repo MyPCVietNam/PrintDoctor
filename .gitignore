@@ -1,0 +1,16 @@
+bin/
+obj/
+artifacts/
+.vs/
+*.user
+*.suo
+*.DotSettings.user
+TestResults/
+*.trx
+*.log
+.idea/
+publish/
+dist/
+*.zip
+!docs/**/*.zip
+.DS_Store
