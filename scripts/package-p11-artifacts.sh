@@ -9,7 +9,9 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$OUT" "$ROOT/artifacts/release"
 
 FULL="$OUT/MyPC-PrintDoctor-P11-FULL-SOURCE.zip"
-CHANGED="$OUT/MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip"
+CHANGED="$OUT/MyPC-PrintDoctor-P11-HF2-CHANGED-SOURCE.zip"
+# Keep legacy name as copy for older scripts
+CHANGED_LEGACY="$OUT/MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip"
 RELEASE="$OUT/MyPC-PrintDoctor-P11-RELEASE-x64.zip"
 
 rm -f "$FULL" "$CHANGED" "$RELEASE"
@@ -49,6 +51,7 @@ done
 
 cd "$STAGE"
 zip -rq "$CHANGED" .
+cp -f "$CHANGED" "$CHANGED_LEGACY"
 
 # --- RELEASE: only real publish with EXE verification ---
 PUB="$ROOT/artifacts/publish/win-x64"
@@ -80,20 +83,29 @@ else
   # Intentionally do NOT create MyPC-PrintDoctor-P11-RELEASE-x64.zip
 fi
 
+CI_URL="${CI_URL:-PENDING}"
+WINDOWS_CI_PASS="${WINDOWS_CI_PASS:-PENDING}"
+HF2_BASELINE="${HF2_BASELINE:-7a8099ec99d5d7a02fc90bc9993b28d607f085c4}"
+
 cat > "$OUT/MANIFEST.json" <<EOF
 {
   "product": "MyPC LAN & Print Doctor",
-  "phase": "P1.1-HF1",
-  "version": "1.1.1",
+  "phase": "P1.1-HF2",
+  "version": "1.1.2",
   "baselineCommit": "$BASELINE",
+  "hf2BaselineCommit": "$HF2_BASELINE",
   "commit": "$COMMIT",
+  "ciUrl": "$CI_URL",
   "generatedUtc": "$STAMP",
   "publishSingleFile": false,
   "publishShape": "self-contained multi-file win-x64",
   "releasePresent": $( [[ -f "$RELEASE" ]] && echo true || echo false ),
+  "releaseAuthority": "GitHub Actions windows-latest artifact preferred; local zip is packaging convenience only",
   "artifacts": [
     "MyPC-PrintDoctor-P11-FULL-SOURCE.zip",
+    "MyPC-PrintDoctor-P11-HF2-CHANGED-SOURCE.zip",
     "MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip",
+    "MyPC-PrintDoctor-P11-RELEASE-x64.zip",
     "MANIFEST.json",
     "CHANGELOG.md",
     "DEFECT-FIX-MATRIX.md",
@@ -104,7 +116,7 @@ cat > "$OUT/MANIFEST.json" <<EOF
   "readiness": {
     "UNIT_PASS": true,
     "INTEGRATION_PASS": true,
-    "WINDOWS_CI_PASS": "PENDING",
+    "WINDOWS_CI_PASS": "$WINDOWS_CI_PASS",
     "WIN10_LAB_NOT_RUN": true,
     "WIN11_LAB_NOT_RUN": true,
     "PHYSICAL_LAN_NOT_RUN": true,
@@ -122,7 +134,7 @@ cp "$ROOT/docs/BUILD-INFO-P11.md" "$OUT/BUILD-INFO.md" 2>/dev/null || true
 
 (
   cd "$OUT"
-  FILES_HASH=(MyPC-PrintDoctor-P11-FULL-SOURCE.zip MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip MANIFEST.json CHANGELOG.md DEFECT-FIX-MATRIX.md TEST-REPORT.md BUILD-INFO.md)
+  FILES_HASH=(MyPC-PrintDoctor-P11-FULL-SOURCE.zip MyPC-PrintDoctor-P11-HF2-CHANGED-SOURCE.zip MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip MANIFEST.json CHANGELOG.md DEFECT-FIX-MATRIX.md TEST-REPORT.md BUILD-INFO.md)
   if [[ -f MyPC-PrintDoctor-P11-RELEASE-x64.zip ]]; then
     FILES_HASH+=(MyPC-PrintDoctor-P11-RELEASE-x64.zip)
   fi

@@ -1,39 +1,32 @@
-# Changelog — v1.1.1 (P1.1 HF1)
+# Changelog — v1.1.2 (P1.1 HF2)
 
-## Security & diagnostic truth gate (HF1)
+## Final safety gate (HF2)
 
-### FIXED — BLOCKER 01 Firewall scope
-- Removed `Enable-NetFirewallRule -Group` wholesale enablement.
-- ICMP/FPS repairs set **Profile=Private** and **RemoteAddress=LocalSubnet before Enable**.
-- Verify requires full scope via `FirewallRuleScope` (not merely Enabled=true).
-- GPO/PolicyStore-managed rules are skipped.
+### Firewall strict scope
+- Removed empty `catch` around `Set-NetFirewallAddressFilter`.
+- Enable never runs unless Profile=Private and RemoteAddress=LocalSubnet re-read succeeds.
+- Empty RemoteAddresses is **not** LocalSubnet evidence.
+- Verify checks **all changed rule ids** (recorded list), not “any matching rule”.
+- Approved FPS rule ids only; no `-Group` enable; Public rules untouched.
 
-### FIXED — BLOCKER 02 Incomplete rollback
-- Backup/restore compare Enabled, Profile, RemoteAddress (and related attributes).
-- RollbackVerified only after re-read matches backup (not PowerShell `OK` alone).
-- Per-execution `TransactionId`; durable `ApplyStarted` before mutation.
-- Crash mid-Apply → `UNCERTAIN_STATE` (never auto-claim recovered).
+### Exact rollback
+- Restore sets Profile/Direction/Action/RemoteAddress before enable/disable.
+- Re-read `MatchesBackupSnapshot`; RemoteAddress restore failure ⇒ PARTIAL_ROLLBACK, never Verified=true.
 
-### FIXED — HIGH 03 Unknown ≠ Fail
-- `EvaluateNetwork` uses only decisive `ProbeOutcome.Pass|Fail`.
-- Unknown/NotTested/NotApplicable never become LAN-001.
+### Crash recovery across sessions
+- `Applied` without `Verify` ⇒ UNCERTAIN_STATE.
+- `RepairJournal.ScanAllSessions` blocks further repairs until technician review (no auto-rollback).
 
-### FIXED — HIGH 04 Repair ownership
-- Findings carry `RepairOwner`; client ICMP→server is `SERVER_ACTION_REQUIRED`.
-- Executor/UI block local firewall repair for remote inbound issues.
+### Network profile target
+- Explicit InterfaceIndex required; Preview shows Alias/IP/GW/Category; InterfaceIndex=? refused.
 
-### FIXED — HIGH 05 Report privacy
-- Consistent redaction (stable tokens) across JSON/TXT/ZIP including routes, neighbors, probes, repairs, events, collector notes.
-- ACL applied to session dir and export ZIP; icacls failures surface when required.
+### Privacy & ShaPrint
+- Ephemeral HMAC tokens (key not in ZIP); not raw SHA256(IP).
+- ShaPrint listeners require ShaPrint executable path/PID — PrintBridge ≠ ShaPrint (FOREIGN_PROCESS/PORT_CONFLICT).
 
-### FIXED — HIGH 06 Collectors / compare
-- `EnableInsecureGuestLogons` from `Get-SmbClientConfiguration`.
-- ShaPrint listeners filtered by owning PID.
-- Network profile repair prefers primary interface (metric).
-- Compare validates SchemaVersion/Role/SessionId/StartedAt; rejects oversized ZIP; notes redaction limits.
+### Regression / CI
+- HF2 unit suite + PowerShell script-contract fixtures (`Hf2WindowsPowerShellFixtureTests`, recording runner).
+- CI never mutates production firewall; live mutation gated by `LPD_ALLOW_FIREWALL_MUTATION`.
 
-### FIXED — HIGH 07 Delivery integrity
-- Packaging never emits a fake RELEASE ZIP; writes `RELEASE_BLOCKED.txt` instead.
-
-## Explicit non-claims
-Not FIELD READY / PRODUCTION READY until Win10/11 + physical LAN/print labs complete.
+## Non-claims
+Windows 10/11 + physical LAN still NOT_RUN. Not FIELD/PRODUCTION READY. Fake unit tests do not close Windows compatibility alone.

@@ -1,7 +1,19 @@
-# DEFECT-FIX-MATRIX — P1.1 + HF1
+# DEFECT-FIX-MATRIX — P1.1 + HF1 + HF2
 
-Baseline: PR #1 merged commit `1647875`. Branch: `fix/p11-diagnostic-accuracy-safe-repair` (PR #2).
-HF1 audit HEAD: `6c753e1`.
+Baseline: PR #1 `1647875`. PR #2 branch `fix/p11-diagnostic-accuracy-safe-repair`.
+HF2 baseline HEAD: `7a8099e`.
+
+## HF2 defects
+
+| Defect ID | Severity | Status | File/function | After | Test | Result | Remaining risk |
+|-----------|----------|--------|---------------|-------|------|--------|----------------|
+| HF2-A Scope | BLOCKER | FIXED (code+unit+PS fixture) | `EnableFileAndPrinterSharingAsync`, `EnableScopedIcmpEchoAsync`, `FirewallRuleScope`, repair Verify | No empty catch; scope before Enable; all changed ids verified; empty remote ≠ LocalSubnet | HF2_RemoteAddressFail_*, HF2_OneGoodOneBad*, HF2_EmptyRemote*, Hf2WindowsPowerShellFixtureTests | UNIT+INT_PASS (no CI mutation) | Win10/11 live firewall mutation lab **BLOCKED** |
+| HF2-B Rollback | BLOCKER | FIXED (code+unit) | `Restore*FromBackupAsync`, `MatchesBackupSnapshot` | PARTIAL_ROLLBACK if RemoteAddress mismatch | HF2_RollbackWrongRemote* | UNIT_PASS | Live restore lab **BLOCKED** |
+| HF2-C Crash | BLOCKER | FIXED (code+unit) | `RepairJournal.IsUncertain`, `ScanAllSessions`, MainViewModel | Applied w/o Verify + cross-session block | HF2_CrashAfterApplied*, HF2_RecoveryFromPrior* | UNIT_PASS | Operator UX manual only |
+| HF2-D NIC | HIGH | FIXED (code+unit) | `NetworkProfilePrivateRepair`, MainViewModel | Explicit IfIndex; Preview details | HF2_MultiNic* | UNIT_PASS | UI selection UX |
+| HF2-E Privacy | HIGH | FIXED (code+unit) | `ReportExporter.StableToken` | Ephemeral HMAC, key not in ZIP | HF2_Redaction_NotReversible* | UNIT_PASS | — |
+| HF2-F ShaPrint | HIGH | FIXED (code+unit) | `CollectListeningAsync` | ShaPrint path/PID only; FOREIGN_PROCESS | HF2_PrintBridge* | UNIT_PASS | Live process names lab |
+| HF2-G Client role | HIGH | FIXED | `ReportCompareService` | Client role required | HF2_ClientReport_WrongRole* | UNIT_PASS | — |
 
 ## HF1 defects
 
