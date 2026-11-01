@@ -30,8 +30,8 @@ public class Hf2WindowsPowerShellFixtureTests
         var script = Assert.Single(runner.Scripts);
         AssertScriptSafeScope(script);
         Assert.Contains("FPS-ICMP4-ERQ-In", script, StringComparison.Ordinal);
-        Assert.Contains("Set-NetFirewallAddressFilter", script, StringComparison.Ordinal);
-        Assert.Contains("RemoteAddress LocalSubnet", script, StringComparison.Ordinal);
+        Assert.Contains("Set-NetFirewallRule -Name $name -RemoteAddress LocalSubnet", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set-NetFirewallAddressFilter -AssociatedNetFirewallRule", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Enable-NetFirewallRule -Group", script, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("catch { }", script, StringComparison.Ordinal);
         Assert.DoesNotContain("catch{}", script, StringComparison.Ordinal);
@@ -40,7 +40,7 @@ public class Hf2WindowsPowerShellFixtureTests
         var trackIdx = script.IndexOf("$tracked.Add", StringComparison.Ordinal);
         var tryIdx = script.IndexOf("try {", StringComparison.Ordinal);
         Assert.True(trackIdx > tryIdx, "tracked intent must be inside try before Sets");
-        var addrInTry = script.IndexOf("Set-NetFirewallAddressFilter", trackIdx, StringComparison.Ordinal);
+        var addrInTry = script.IndexOf("Set-NetFirewallRule -Name $name -RemoteAddress LocalSubnet", trackIdx, StringComparison.Ordinal);
         var enableInTry = script.IndexOf("Enable-NetFirewallRule -Name $name", trackIdx, StringComparison.Ordinal);
         if (enableInTry < 0)
             enableInTry = script.IndexOf("Enable-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In'", trackIdx, StringComparison.Ordinal);
@@ -70,9 +70,10 @@ public class Hf2WindowsPowerShellFixtureTests
 
         var trackIdx = script.IndexOf("$tracked.Add", StringComparison.Ordinal);
         Assert.True(trackIdx >= 0);
-        var addrAfterTrack = script.IndexOf("Set-NetFirewallAddressFilter", trackIdx, StringComparison.Ordinal);
+        var addrAfterTrack = script.IndexOf("Set-NetFirewallRule -Name $name -RemoteAddress LocalSubnet", trackIdx, StringComparison.Ordinal);
         var enableAfterTrack = script.IndexOf("Enable-NetFirewallRule -Name $name", trackIdx, StringComparison.Ordinal);
         Assert.True(addrAfterTrack >= 0 && enableAfterTrack > addrAfterTrack);
+        Assert.False(NetSecurityCommandCatalog.IsInvalidSetAddressFilterUsage(script));
         Assert.Contains("Restore-RuleSnap", script, StringComparison.Ordinal);
     }
 
@@ -96,8 +97,8 @@ public class Hf2WindowsPowerShellFixtureTests
         {
             Handler = (_, script) =>
             {
-                if (script.Contains("Get-NetFirewallRule", StringComparison.Ordinal)
-                    && !script.Contains("Set-NetFirewallRule", StringComparison.Ordinal))
+                if (script.Contains("ConvertTo-Json", StringComparison.Ordinal)
+                    && script.Contains("Get-NetFirewallRule", StringComparison.Ordinal))
                 {
                     // GetRelevantRules after restore
                     return new ProcessResult
@@ -115,11 +116,13 @@ public class Hf2WindowsPowerShellFixtureTests
         Assert.False(restore.Verified);
         Assert.True(restore.Partial);
 
-        var mutate = runner.Scripts.First(s => s.Contains("Set-NetFirewallAddressFilter", StringComparison.Ordinal));
-        Assert.Contains("REMOTE_RESTORE_FAIL", mutate, StringComparison.Ordinal);
-        var addrIdx = mutate.IndexOf("Set-NetFirewallAddressFilter", StringComparison.Ordinal);
+        var mutate = runner.Scripts.First(s => s.Contains("REMOTE_RESTORE_FAIL", StringComparison.Ordinal));
+        Assert.Contains("Set-NetFirewallRule -Name", mutate, StringComparison.Ordinal);
+        Assert.Contains("-RemoteAddress", mutate, StringComparison.Ordinal);
+        var addrIdx = mutate.IndexOf("Set-NetFirewallRule -Name", StringComparison.Ordinal);
         var enableIdx = Regex.Match(mutate, @"Enable-NetFirewallRule|Disable-NetFirewallRule").Index;
         Assert.True(addrIdx >= 0 && enableIdx > addrIdx);
+        Assert.False(NetSecurityCommandCatalog.IsInvalidSetAddressFilterUsage(mutate));
     }
 
     [Fact]
@@ -147,6 +150,42 @@ public class Hf2WindowsPowerShellFixtureTests
             },
             TimeSpan.FromSeconds(20));
         Assert.True(probe.ExitCode == 0 || !string.IsNullOrWhiteSpace(probe.StdOut) || !string.IsNullOrWhiteSpace(probe.StdErr));
+    }
+
+    /// <summary>
+    /// P2-00-A: live Windows parameter-binding discovery — AssociatedNetFirewallRule must NOT
+    /// appear on Set-NetFirewallAddressFilter; RemoteAddress must appear on Set-NetFirewallRule.
+    /// Off-Windows: no-op pass (catalog unit tests still cover the contract).
+    /// </summary>
+    [Fact]
+    public async Task P2_00A_LiveWindows_NetSecurityParameterBinding_ReadOnly()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return;
+
+        var mutateFlag = Environment.GetEnvironmentVariable("LPD_ALLOW_FIREWALL_MUTATION");
+        Assert.True(string.IsNullOrEmpty(mutateFlag) || mutateFlag is "0" or "false");
+
+        var runner = new ProcessRunner();
+        var script = @"
+$ErrorActionPreference = 'Stop'
+$setAddr = @((Get-Command Set-NetFirewallAddressFilter).Parameters.Keys)
+$setRule = @((Get-Command Set-NetFirewallRule).Parameters.Keys)
+$getAddr = @((Get-Command Get-NetFirewallAddressFilter).Parameters.Keys)
+[pscustomobject]@{
+  SetAddrHasAssociated = ($setAddr -contains 'AssociatedNetFirewallRule')
+  SetRuleHasRemote = ($setRule -contains 'RemoteAddress')
+  GetAddrHasAssociated = ($getAddr -contains 'AssociatedNetFirewallRule')
+} | ConvertTo-Json -Compress
+";
+        var probe = await runner.RunAsync(
+            "powershell.exe",
+            new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script },
+            TimeSpan.FromSeconds(30));
+        Assert.Equal(0, probe.ExitCode);
+        Assert.Contains("\"SetAddrHasAssociated\":false", probe.StdOut.Replace(" ", ""), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"SetRuleHasRemote\":true", probe.StdOut.Replace(" ", ""), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"GetAddrHasAssociated\":true", probe.StdOut.Replace(" ", ""), StringComparison.OrdinalIgnoreCase);
     }
 
     private static void AssertScriptSafeScope(string script)

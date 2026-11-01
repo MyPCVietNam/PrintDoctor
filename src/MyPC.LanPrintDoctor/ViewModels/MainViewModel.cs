@@ -11,6 +11,7 @@ using MyPC.LanPrintDoctor.Abstractions.Network;
 using MyPC.LanPrintDoctor.Abstractions.Repair;
 using MyPC.LanPrintDoctor.Abstractions.Validation;
 using MyPC.LanPrintDoctor.Core.Compare;
+using MyPC.LanPrintDoctor.Core.Engine;
 using MyPC.LanPrintDoctor.Core.Models;
 using MyPC.LanPrintDoctor.Core.Orchestration;
 using MyPC.LanPrintDoctor.Platform.Windows;
@@ -157,6 +158,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 });
             }
 
+            // P2 network root-cause cases (A/B/C) — evidence-based, no single-cause default
+            foreach (var rc in new NetworkRootCauseEngine().Analyze(snap))
+            {
+                Findings.Add(new FindingRow
+                {
+                    Status = rc.Status.ToString().ToUpperInvariant(),
+                    Title = $"{rc.CaseId} — {rc.Title}",
+                    Evidence = (rc.Evidence ?? "") + " | " + (rc.RecommendedAction ?? "")
+                        + (rc.InfrastructureActionRequired ? " | INFRASTRUCTURE_ACTION_REQUIRED" : "")
+                });
+            }
+
             if (Findings.Count == 0)
             {
                 Findings.Add(new FindingRow
@@ -183,24 +196,60 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private void ShowCauses()
     {
         if (_lastSnapshot is null) return;
-        var text = string.Join(Environment.NewLine + Environment.NewLine,
-            _lastSnapshot.Findings.Select(f =>
-                $"{f.Id} [{f.Status}]\n{f.Title}\n{Labels.Evidence}: {f.Evidence}\n{Labels.Causes}: {string.Join("; ", f.PossibleCauses)}\n{Labels.Actions}: {string.Join("; ", f.RecommendedActions)}"));
+        var findings = _lastSnapshot.Findings.Select(f =>
+            $"{f.Id} [{f.Status}]\n{f.Title}\n{Labels.Evidence}: {f.Evidence}\n{Labels.Causes}: {string.Join("; ", f.PossibleCauses)}\n{Labels.Actions}: {string.Join("; ", f.RecommendedActions)}");
+        var root = new NetworkRootCauseEngine().Analyze(_lastSnapshot).Select(rc =>
+            $"{rc.CaseId} [{rc.Confidence}/{rc.Status}]\n{rc.Title}\n{Labels.Evidence}: {rc.Evidence}\n{Labels.Actions}: {rc.RecommendedAction}"
+            + (rc.InfrastructureActionRequired ? "\nINFRASTRUCTURE_ACTION_REQUIRED" : ""));
+        var text = string.Join(Environment.NewLine + Environment.NewLine, findings.Concat(root));
         MessageBox.Show(string.IsNullOrWhiteSpace(text) ? Labels.NoCritical : text, Labels.Causes, MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private async Task SafeRepairAsync()
     {
         if (_lastSnapshot is null) return;
-        var repairable = _lastSnapshot.Findings.Where(f => !string.IsNullOrWhiteSpace(f.RepairId)).ToList();
+        var repairable = _lastSnapshot.Findings
+            .Where(f => !string.IsNullOrWhiteSpace(f.RepairId)
+                        && f.RepairOwner is not RepairOwnerRole.ServerActionRequired and not RepairOwnerRole.None)
+            .GroupBy(f => f.RepairId!, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
         if (repairable.Count == 0)
         {
-            StatusText = Labels.NoRepair;
+            var serverOnly = _lastSnapshot.Findings.Any(f => f.RepairOwner == RepairOwnerRole.ServerActionRequired);
+            StatusText = serverOnly
+                ? "SERVER_ACTION_REQUIRED: run PrintDoctor on the server — local client firewall will not be modified for a remote inbound issue."
+                : Labels.NoRepair;
+            if (serverOnly)
+                MessageBox.Show(StatusText, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        var pick = repairable.FirstOrDefault(f => f.RepairOwner is not RepairOwnerRole.ServerActionRequired and not RepairOwnerRole.None)
-                   ?? repairable[0];
+        // Never auto-pick the first repair when multiple are available — user must choose.
+        Finding? pick = null;
+        if (repairable.Count == 1)
+        {
+            pick = repairable[0];
+        }
+        else
+        {
+            foreach (var candidate in repairable)
+            {
+                var ans = MessageBox.Show(
+                    $"Chọn repair này?\n\n{candidate.RepairId}\n{candidate.Title}\n\n{candidate.Evidence}",
+                    Labels.SafeRepair,
+                    MessageBoxButton.YesNoCancel,
+                    MessageBoxImage.Question);
+                if (ans == MessageBoxResult.Cancel) { StatusText = Labels.RepairCancelled; return; }
+                if (ans == MessageBoxResult.Yes) { pick = candidate; break; }
+            }
+            if (pick is null)
+            {
+                StatusText = "Không chọn repair — từ chối Apply (không tự chọn repair đầu tiên).";
+                return;
+            }
+        }
+
         if (pick.RepairOwner == RepairOwnerRole.ServerActionRequired || string.IsNullOrWhiteSpace(pick.RepairId))
         {
             StatusText = "SERVER_ACTION_REQUIRED: run PrintDoctor on the server — local client firewall will not be modified for a remote inbound issue.";
@@ -265,7 +314,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
         }
 
-        var op = CreateRepair(pick.RepairId!, fw, svc, elev, profiles, selectedIf, previewDetail);
+        var runner = new ProcessRunner();
+        var op = CreateRepair(pick.RepairId!, fw, svc, elev, profiles, runner, selectedIf, previewDetail);
 
         if (!op.IsImplemented)
         {
@@ -374,12 +424,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Abstractions.Services.IWindowsServiceInspector svc,
         Abstractions.Security.IElevationService elev,
         Abstractions.Firewall.INetworkProfileService profiles,
+        Abstractions.Platform.IProcessRunner runner,
         int? preferredInterfaceIndex = null,
         string? previewDetail = null)
         => repairId switch
         {
             "FW-ICMP-ECHO" => new FirewallIcmpEchoRepair(fw, elev),
             "FW-FILE-PRINT-SHARE" => new FilePrintShareRepair(fw, elev),
+            "FW-OWNED-ICMP4" => new OwnedFirewallRuleRepair(runner, elev, OwnedFirewallSpec.IcmpEchoPrivateLocalSubnet()),
+            "FW-OWNED-SMB445" => new OwnedFirewallRuleRepair(runner, elev, OwnedFirewallSpec.Smb445PrivateLocalSubnet()),
+            "FW-OWNED-SHA48631" => new OwnedFirewallRuleRepair(runner, elev, OwnedFirewallSpec.ShaPrint48631()),
+            "FW-OWNED-SHA48633" => new OwnedFirewallRuleRepair(runner, elev, OwnedFirewallSpec.ShaPrint48633Udp()),
             "NET-PROFILE-PRIVATE" => new NetworkProfilePrivateRepair(profiles, elev, preferredInterfaceIndex, previewDetail),
             "SVC-SPOOLER-START" => new ServiceStartRepair("Spooler", "SVC-SPOOLER-START", "Start Print Spooler", svc, elev),
             "SVC-LANMANSERVER-START" => new ServiceStartRepair("LanmanServer", "SVC-LANMANSERVER-START", "Start LanmanServer", svc, elev),

@@ -94,8 +94,9 @@ public class FinalTwoSafetyDefectTests
         var trackIdx = captured!.IndexOf("$tracked.Add", StringComparison.Ordinal);
         Assert.True(trackIdx >= 0, "expected $tracked.Add intent marker");
         // First mutation Set after intent (ignore Set-* inside Restore-RuleSnap helper defined earlier).
-        var firstSetAfterTrack = captured.IndexOf("Set-NetFirewall", trackIdx, StringComparison.Ordinal);
-        Assert.True(firstSetAfterTrack > trackIdx, "mutation intent must be recorded before first Set-NetFirewall* in apply path");
+        var firstSetAfterTrack = captured.IndexOf("Set-NetFirewallRule", trackIdx, StringComparison.Ordinal);
+        Assert.True(firstSetAfterTrack > trackIdx, "mutation intent must be recorded before first Set-NetFirewallRule in apply path");
+        Assert.False(NetSecurityCommandCatalog.IsInvalidSetAddressFilterUsage(captured));
         Assert.Contains("Get-RuleSnap", captured, StringComparison.Ordinal);
         Assert.Contains("Restore-RuleSnap", captured, StringComparison.Ordinal);
         Assert.Contains("UNCERTAIN_STATE", captured, StringComparison.Ordinal);

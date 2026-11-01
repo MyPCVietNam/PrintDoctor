@@ -1,13 +1,10 @@
-# BUILD-INFO — P1.1 HF final two safety defects
+# BUILD-INFO — v1.2.0-RC1
 
 - Product: MyPC LAN & Print Doctor
-- Version: **1.1.4**
-- Baseline (HF final two): `8cf484590614dc4ddb363866074f944af212dd1a`
-- Prior correction baseline: `a33d201841049523b801e9d31950532684ef6cbd`
-- Branch: `fix/p11-diagnostic-accuracy-safe-repair` (PR #2)
-- Target frameworks: `net10.0` (libs/tests), `net10.0-windows` (WPF)
-- RID: `win-x64`
-- Self-contained: `true`
-- PublishSingleFile: `false` → **self-contained multi-file** release
-- CI: `.github/workflows/windows-build.yml` (no production firewall mutation)
-- FIELD READY: **false** (Windows physical / read-only lab still required)
+- Version: **1.2.0** (`InformationalVersion` **1.2.0-RC1**)
+- Baseline: PR #2 HEAD `096297248f904ec60467a2522d5dfced8cece1f7` (v1.1.4)
+- Branch: `cursor/p2-rc1-field-pilot-e81e`
+- Base for PR: `fix/p11-diagnostic-accuracy-safe-repair` (stacked on PR #2) or `main` if #2 merges first
+- Publish: win-x64 self-contained **multi-file** (`PublishSingleFile=false`) — not a single-file EXE claim
+- FIELD_READY: **false** — FIELD_VALIDATION_PENDING
+- Authoritative RELEASE ZIP: GitHub Actions `windows-latest` artifact

@@ -191,14 +191,41 @@ public sealed class RepairJournal
         }
     }
 
+    /// <summary>
+    /// Write-ahead durable persist: temp → flush → replace. Fails closed if disk write fails
+    /// (caller must not mutate when Persist throws after MutationIntent / ApplyStarted).
+    /// </summary>
     private void Persist()
     {
         if (IsCorrupt)
             throw new InvalidOperationException("CORRUPT_JOURNAL: refusing to overwrite corrupt repair-journal.json");
         var tmp = _path + ".tmp";
-        File.WriteAllText(tmp, ToJson());
-        File.Copy(tmp, _path, overwrite: true);
-        File.Delete(tmp);
+        var json = ToJson();
+        using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+        using (var sw = new StreamWriter(fs))
+        {
+            sw.Write(json);
+            sw.Flush();
+            fs.Flush(flushToDisk: true);
+        }
+
+        // Atomic replace where supported
+        if (File.Exists(_path))
+            File.Replace(tmp, _path, _path + ".bak", ignoreMetadataErrors: true);
+        else
+            File.Move(tmp, _path);
+
+        try { if (File.Exists(_path + ".bak")) File.Delete(_path + ".bak"); } catch { /* best-effort */ }
+        try { if (File.Exists(tmp)) File.Delete(tmp); } catch { /* best-effort */ }
+    }
+
+    /// <summary>Record mutation intent and force durable flush before any Windows change.</summary>
+    public void RecordMutationIntent(string transactionId, string operationId, string expectedTargetIdsJson, string beforeSnapshotJson)
+    {
+        Record(transactionId, operationId, "MutationIntent", true,
+            detail: expectedTargetIdsJson,
+            backupId: "intent",
+            backupPayload: beforeSnapshotJson);
     }
 
     /// <summary>
@@ -219,10 +246,11 @@ public sealed class RepairJournal
 
         var phases = entries.Select(e => e.Phase).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // ApplyStarted without successful Applied (crash mid-mutation)
-        if (phases.Contains("ApplyStarted")
+        // Durable MutationIntent / ApplyStarted without successful Applied (crash mid-mutation)
+        if ((phases.Contains("MutationIntent") || phases.Contains("ApplyStarted"))
             && !entries.Any(e => PhaseEq(e, "Applied") && e.Success)
-            && !phases.Contains("RollbackStarted"))
+            && !phases.Contains("RollbackStarted")
+            && !rollbackOk)
             return true;
 
         // Applied (mutation done) without successful Verify / RollbackVerified

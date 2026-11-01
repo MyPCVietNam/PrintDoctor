@@ -153,7 +153,10 @@ public sealed class RepairExecutor
             backup = await operation.BackupAsync(ct);
             _journal.Record(tx, operation.OperationId, "Backup", true, backup.BackupId, backup.BackupId, backup.PayloadJson);
 
-            // Persist BEFORE mutation
+            // Write-ahead durable intent — must succeed before any mutation.
+            _journal.RecordMutationIntent(tx, operation.OperationId,
+                expectedTargetIdsJson: preview.Changes is { Count: > 0 } ? string.Join("|", preview.Changes) : operation.OperationId,
+                beforeSnapshotJson: backup.PayloadJson ?? "[]");
             _journal.Record(tx, operation.OperationId, "ApplyStarted", true, "About to mutate system state");
             await operation.ApplyAsync(ct);
             _journal.Record(tx, operation.OperationId, "Applied", true);
