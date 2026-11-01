@@ -302,38 +302,6 @@ public class P21SimulationEngineTests
             var rollbackAttempted = false;
             var rollbackVerified = false;
 
-            if (string.Equals(inject, "JOURNAL_WRITE_FAIL", StringComparison.OrdinalIgnoreCase)
-                || id.Contains("journal-write-fails", StringComparison.OrdinalIgnoreCase))
-            {
-                // Make journal directory non-writable so Persist fails inside executor.
-                try
-                {
-                    // Ensure journal file exists first so constructor succeeds.
-                    _ = journal.GetRecoveryState();
-                    if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
-                    {
-                        var chmod = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                        {
-                            FileName = "chmod",
-                            Arguments = "555 \"" + journalDir + "\"",
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true
-                        });
-                        chmod?.WaitForExit(5000);
-                    }
-                    else
-                    {
-                        // Windows: flip directory to read-only attribute best-effort.
-                        var di = new DirectoryInfo(journalDir);
-                        di.Attributes |= FileAttributes.ReadOnly;
-                    }
-                }
-                catch
-                {
-                    /* fall through — PolicyGatedRepair also blocks JOURNAL_WRITE_FAIL */
-                }
-            }
-
             try
             {
                 if (string.Equals(inject, "CRASH_AFTER_INTENT", StringComparison.OrdinalIgnoreCase)
@@ -422,22 +390,6 @@ public class P21SimulationEngineTests
                 result.NoChange,
                 result.UncertainState
             });
-
-            // Restore journal dir writability for cleanup.
-            try
-            {
-                if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
-                {
-                    var chmod = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = "chmod",
-                        Arguments = "755 \"" + journalDir + "\"",
-                        RedirectStandardOutput = true
-                    });
-                    chmod?.WaitForExit(3000);
-                }
-            }
-            catch { /* ignore */ }
         }
 
         WriteStrictArtifacts("fault-injection", outcomes);
@@ -801,19 +753,28 @@ public class P21SimulationEngineTests
                     Reason = "POLICY:GPO_MANAGED — domain GPO owns firewall; local create blocked."
                 };
 
-            if (string.Equals(_inject, "JOURNAL_WRITE_FAIL", StringComparison.OrdinalIgnoreCase))
-            {
-                // Soft pre-check marker; primary path is non-writable journal dir. Keep eligibility open
-                // so executor reaches Persist — unless we cannot make dir read-only on this OS.
-            }
-
             return await _inner.CheckPrerequisitesAsync(ct);
         }
 
         public Task CollectEvidenceAsync(CancellationToken ct = default) => _inner.CollectEvidenceAsync(ct);
         public Task<RepairPreview> PreviewChangesAsync(CancellationToken ct = default) => _inner.PreviewChangesAsync(ct);
-        public Task<RepairBackup> BackupAsync(CancellationToken ct = default) => _inner.BackupAsync(ct);
-        public Task ApplyAsync(CancellationToken ct = default) => _inner.ApplyAsync(ct);
+
+        public Task<RepairBackup> BackupAsync(CancellationToken ct = default)
+        {
+            // Cross-platform journal-write fault: durable persist must fail closed before Apply.
+            // Windows directory ReadOnly attributes do not reliably block File.Create — inject here
+            // so RepairExecutor's try/catch returns BLOCKED with Applied=false (no mutation).
+            if (string.Equals(_inject, "JOURNAL_WRITE_FAIL", StringComparison.OrdinalIgnoreCase))
+                throw new UnauthorizedAccessException("JOURNAL_WRITE_FAIL: refusing durable journal persist before mutation");
+            return _inner.BackupAsync(ct);
+        }
+
+        public Task ApplyAsync(CancellationToken ct = default)
+        {
+            if (string.Equals(_inject, "JOURNAL_WRITE_FAIL", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("JOURNAL_WRITE_FAIL: Apply must not run after journal persist failure");
+            return _inner.ApplyAsync(ct);
+        }
         public Task<bool> VerifyAsync(CancellationToken ct = default) => _inner.VerifyAsync(ct);
         public Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default)
             => _inner.RollbackAsync(backup, ct);
