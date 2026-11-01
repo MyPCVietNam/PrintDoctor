@@ -14,6 +14,12 @@ public sealed class FakeFirewallInspector : IFirewallInspector
     public bool SharingEnableResult { get; set; } = true;
     /// <summary>Simulate Set-NetFirewallAddressFilter failure — Enable must not run.</summary>
     public bool FailRemoteAddressSet { get; set; }
+    /// <summary>
+    /// Set-NetFirewallRule (profile) succeeds, then address-filter fails.
+    /// Intent is tracked before mutation; controlled rollback restores snapshot.
+    /// </summary>
+    public bool FailAddressFilterAfterProfileSet { get; set; }
+    public bool FailControlledRollback { get; set; }
     public bool FailRemoteAddressRestore { get; set; }
     /// <summary>Change first FPS rule then fail — ChangedRuleIds must still be recorded.</summary>
     public bool FailMidApplyAfterFirst { get; set; }
@@ -22,6 +28,7 @@ public sealed class FakeFirewallInspector : IFirewallInspector
     public int GroupEnableCalls { get; private set; }
     public int EnableInvocationsAfterFailedScope { get; private set; }
     public List<string> LastRestoredRuleIds { get; } = new();
+    public List<string> LastMutationIntentIds { get; } = new();
 
     public Task<IReadOnlyList<FirewallProfileState>> GetProfilesAsync(CancellationToken ct = default)
         => Task.FromResult((IReadOnlyList<FirewallProfileState>)Profiles);
@@ -37,6 +44,57 @@ public sealed class FakeFirewallInspector : IFirewallInspector
 
     public Task<FirewallMutationResult> EnableScopedIcmpEchoAsync(CancellationToken ct = default)
     {
+        const string id = "FPS-ICMP4-ERQ-In";
+        LastMutationIntentIds.Clear();
+        var prior = Rules.FirstOrDefault(r => (r.RuleId ?? "").Contains(id, StringComparison.OrdinalIgnoreCase));
+        var snap = prior is null ? null : Clone(prior);
+
+        if (FailAddressFilterAfterProfileSet)
+        {
+            EnableInvocationsAfterFailedScope = 0;
+            LastMutationIntentIds.Add(id);
+            if (prior is not null)
+            {
+                Rules.RemoveAll(r => (r.RuleId ?? "").Contains(id, StringComparison.OrdinalIgnoreCase)
+                                     && !(r.Profiles ?? "").Contains("Public", StringComparison.OrdinalIgnoreCase));
+                Rules.Add(new FirewallRuleInfo
+                {
+                    RuleId = prior.RuleId,
+                    Name = prior.Name,
+                    DisplayName = prior.DisplayName,
+                    Enabled = false,
+                    Direction = prior.Direction,
+                    Action = prior.Action,
+                    Protocol = prior.Protocol,
+                    Profiles = "Private",
+                    RemoteAddresses = prior.RemoteAddresses,
+                    LocalPorts = prior.LocalPorts,
+                    PolicyStore = prior.PolicyStore,
+                    IcmpTypesAndCodes = prior.IcmpTypesAndCodes,
+                    Grouping = prior.Grouping
+                });
+            }
+
+            var rollbackOk = snap is not null && !FailControlledRollback;
+            if (rollbackOk)
+            {
+                Rules.RemoveAll(r => (r.RuleId ?? "").Contains(id, StringComparison.OrdinalIgnoreCase)
+                                     && !(r.Profiles ?? "").Contains("Public", StringComparison.OrdinalIgnoreCase));
+                Rules.Add(Clone(snap!));
+            }
+
+            return Task.FromResult(new FirewallMutationResult
+            {
+                Success = false,
+                ChangedRuleIds = new[] { id },
+                Detail = rollbackOk
+                    ? "PARTIAL_CHANGED:FPS-ICMP4-ERQ-In|ROLLBACK_OK|ERR:REMOTE_NOT_SET after Set-NetFirewallRule"
+                    : "PARTIAL_CHANGED:FPS-ICMP4-ERQ-In|ROLLBACK_FAIL|UNCERTAIN_STATE|ERR:REMOTE_NOT_SET after Set-NetFirewallRule",
+                ControlledRollbackSucceeded = rollbackOk,
+                Uncertain = !rollbackOk
+            });
+        }
+
         if (FailRemoteAddressSet)
         {
             EnableInvocationsAfterFailedScope = 0;
@@ -50,8 +108,8 @@ public sealed class FakeFirewallInspector : IFirewallInspector
         if (!IcmpEnableResult)
             return Task.FromResult(new FirewallMutationResult { Success = false, Detail = "enable failed" });
 
+        LastMutationIntentIds.Add(id);
         IcmpEnableCalls++;
-        // Single named rule — replace in place (do not leave Domain/Public duplicate same RuleId)
         var preservedPublicOther = Rules
             .Where(r => (r.Profiles ?? "").Contains("Public", StringComparison.OrdinalIgnoreCase)
                         && !(r.RuleId ?? "").Contains("FPS-ICMP4-ERQ-In", StringComparison.OrdinalIgnoreCase))
@@ -93,7 +151,6 @@ public sealed class FakeFirewallInspector : IFirewallInspector
 
             if (FailRemoteAddressRestore)
             {
-                // Simulate partial: Enabled restored but RemoteAddress stuck at LocalSubnet
                 Rules.RemoveAll(r => (r.RuleId ?? "").Contains("FPS-ICMP4-ERQ-In"));
                 Rules.Add(new FirewallRuleInfo
                 {
@@ -104,7 +161,7 @@ public sealed class FakeFirewallInspector : IFirewallInspector
                     Action = prior.Action,
                     Protocol = prior.Protocol,
                     Profiles = prior.Profiles,
-                    RemoteAddresses = "LocalSubnet", // WRONG vs backup
+                    RemoteAddresses = "LocalSubnet",
                     PolicyStore = "ActiveStore",
                     IcmpTypesAndCodes = prior.IcmpTypesAndCodes
                 });
@@ -146,6 +203,7 @@ public sealed class FakeFirewallInspector : IFirewallInspector
         var changed = new List<string>();
         foreach (var id in new[] { "FPS-SMB-In-TCP", "FPS-SpoolSvc-In-TCP" })
         {
+            LastMutationIntentIds.Add(id);
             Rules.RemoveAll(r => r.RuleId == id && (r.Profiles ?? "").Contains("Private", StringComparison.OrdinalIgnoreCase));
             Rules.Add(new FirewallRuleInfo
             {
@@ -182,7 +240,6 @@ public sealed class FakeFirewallInspector : IFirewallInspector
             var priors = JsonSerializer.Deserialize<List<FirewallRuleInfo>>(string.IsNullOrWhiteSpace(backupJson) ? "[]" : backupJson)
                          ?? new();
             var restored = new List<string>();
-            // Only restore rules present in the (already filtered) backup payload — never invent others.
             foreach (var prior in priors.Where(r => (r.RuleId ?? "").StartsWith("FPS-", StringComparison.OrdinalIgnoreCase)))
             {
                 Rules.RemoveAll(r => string.Equals(r.RuleId, prior.RuleId, StringComparison.OrdinalIgnoreCase)

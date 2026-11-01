@@ -68,8 +68,13 @@ public interface IFirewallInspector
 public sealed class FirewallMutationResult
 {
     public bool Success { get; init; }
+    /// <summary>Rule ids with durable mutation intent (recorded before the first Set-*).</summary>
     public IReadOnlyList<string> ChangedRuleIds { get; init; } = Array.Empty<string>();
     public string? Detail { get; init; }
+    /// <summary>True when post-failure state could not be verified restored — never treat as Clean.</summary>
+    public bool Uncertain { get; init; }
+    /// <summary>Controlled in-script rollback from pre-mutation snapshot succeeded for tracked ids.</summary>
+    public bool ControlledRollbackSucceeded { get; init; }
 }
 
 public sealed class FirewallRestoreResult

@@ -1,21 +1,16 @@
-# Changelog — v1.1.3 (P1.1 HF2 final correction)
+# Changelog — v1.1.4 (final two safety defects)
 
-## HF2 final correction (safety)
+## DEFECT 1 — Mutation before tracking
+- Snapshot rule state before any Set-*.
+- Record durable `$tracked` / ChangedRuleIds **before** the first Set-NetFirewall*.
+- Scope while Disabled; Enable only after LocalSubnet confirmed (no Enabled+wide-scope window).
+- On mutation failure: controlled `Restore-RuleSnap` for tracked ids only.
+- ROLLBACK_FAIL ⇒ `UNCERTAIN_STATE` (never Clean).
 
-### RepairJournal recovery
-- `IsUncertain` evaluates **Phase and Success**.
-- `Verify=false` and `RollbackVerified=false` never count as completed.
-- Unreadable journal JSON ⇒ `CorruptJournal` / **CORRUPT_JOURNAL** (never Clean).
-- `ScanAllSessions` detects Uncertain, Incomplete, and Corrupt across sessions.
-
-### RepairExecutor
-- Prior `UNCERTAIN_STATE`, `INCOMPLETE`, or `CORRUPT_JOURNAL` ⇒ immediate **BLOCKED**.
-- No warn-and-continue into Apply (engine-level; UI-independent).
-
-### Firewall rollback scope
-- Capture `ChangedRuleIds` even on mid-Apply failure (`PARTIAL_CHANGED`).
-- Rollback restores **only** transaction-changed rules; unrelated/Public rules untouched.
-- Never claim Verified without full backup re-read match.
+## DEFECT 2 — Empty journal fail-open
+- Existing `repair-journal.json` that is empty/whitespace ⇒ `IsCorrupt` / `CorruptJournal`.
+- Missing file still Clean (fresh session).
+- Corrupt journal refused overwrite; executor returns BLOCKED.
 
 ## Non-claims
-Windows 10/11 physical LAN read-only labs still **BLOCKED / NOT_RUN**. Not FIELD/PRODUCTION READY.
+Windows physical / read-only field lab still **BLOCKED**. Not FIELD/PRODUCTION READY.

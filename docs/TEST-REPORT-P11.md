@@ -1,22 +1,19 @@
-# TEST-REPORT — P1.1 HF2 final correction (v1.1.3)
+# TEST-REPORT — v1.1.4 final two safety defects
 
 | Gate | Result |
 |------|--------|
-| UNIT_PASS | PASS (94) |
-| INTEGRATION_PASS | PASS (9; no firewall mutation in CI) |
-| WINDOWS_CI_PASS | PASS — https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41313515087 |
+| UNIT_PASS | PENDING this push |
+| INTEGRATION_PASS | PENDING this push |
+| WINDOWS_CI_PASS | PENDING this push |
 | WIN10_LAB_NOT_RUN | BLOCKED |
 | WIN11_LAB_NOT_RUN | BLOCKED |
 | PHYSICAL_LAN_NOT_RUN | BLOCKED |
 | PHYSICAL_PRINT_NOT_RUN | BLOCKED |
 
-## HF2 correction regressions
-- Verify=false + RollbackVerified=false → UNCERTAIN_STATE
-- Applied + rollback failed → UNCERTAIN_STATE
-- Corrupt journal → CORRUPT_JOURNAL / BLOCKED
-- Executor with unfinished prior tx → Apply blocked
-- Rollback only transaction ChangedRuleIds
-- PowerShell collector fail → UNKNOWN (no fake PASS)
-- PARTIAL_CHANGED parsed on Apply failure
+## Final two defect regressions
+- D1: Set-NetFirewallRule PASS + AddressFilter FAIL → intent tracked; rollback OK or UNCERTAIN_STATE
+- D1: PS script records `$tracked.Add` before first Set-NetFirewall*
+- D2: empty/whitespace journal → CorruptJournal; ScanAllSessions; Executor BLOCKED; no overwrite
+- D2: missing journal file → Clean (not corrupt)
 
-Honest note: code safety closed for these defects at unit/fixture level. Live Windows read-only lab still required before FIELD READY. Not FIELD/PRODUCTION READY.
+Honest note: unit/fixture ≠ Windows physical lab. Not FIELD READY.

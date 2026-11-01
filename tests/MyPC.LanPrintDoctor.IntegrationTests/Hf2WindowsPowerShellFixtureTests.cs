@@ -36,9 +36,17 @@ public class Hf2WindowsPowerShellFixtureTests
         Assert.DoesNotContain("catch { }", script, StringComparison.Ordinal);
         Assert.DoesNotContain("catch{}", script, StringComparison.Ordinal);
 
-        var addrIdx = script.IndexOf("Set-NetFirewallAddressFilter", StringComparison.Ordinal);
-        var enableIdx = script.IndexOf("Enable-NetFirewallRule", StringComparison.Ordinal);
-        Assert.True(addrIdx >= 0 && enableIdx > addrIdx, "RemoteAddress must be set before Enable");
+        // Intent before first mutation; address scope before Enable in the try path; controlled rollback helpers present.
+        var trackIdx = script.IndexOf("$tracked.Add", StringComparison.Ordinal);
+        var tryIdx = script.IndexOf("try {", StringComparison.Ordinal);
+        Assert.True(trackIdx > tryIdx, "tracked intent must be inside try before Sets");
+        var addrInTry = script.IndexOf("Set-NetFirewallAddressFilter", trackIdx, StringComparison.Ordinal);
+        var enableInTry = script.IndexOf("Enable-NetFirewallRule -Name $name", trackIdx, StringComparison.Ordinal);
+        if (enableInTry < 0)
+            enableInTry = script.IndexOf("Enable-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In'", trackIdx, StringComparison.Ordinal);
+        Assert.True(addrInTry >= 0 && enableInTry > addrInTry, "RemoteAddress must be set before Enable");
+        Assert.Contains("Restore-RuleSnap", script, StringComparison.Ordinal);
+        Assert.Contains("UNCERTAIN_STATE", script, StringComparison.Ordinal);
         Assert.Contains("REMOTE_NOT_SET", script, StringComparison.Ordinal);
     }
 
@@ -60,10 +68,12 @@ public class Hf2WindowsPowerShellFixtureTests
             Assert.Contains(id, script, StringComparison.Ordinal);
         Assert.DoesNotContain("Enable-NetFirewallRule -Group", script, StringComparison.OrdinalIgnoreCase);
 
-        // Each Enable must be preceded earlier in script by LocalSubnet set (global order check)
-        var firstEnable = script.IndexOf("Enable-NetFirewallRule", StringComparison.Ordinal);
-        var firstAddr = script.IndexOf("Set-NetFirewallAddressFilter", StringComparison.Ordinal);
-        Assert.True(firstAddr >= 0 && firstEnable > firstAddr);
+        var trackIdx = script.IndexOf("$tracked.Add", StringComparison.Ordinal);
+        Assert.True(trackIdx >= 0);
+        var addrAfterTrack = script.IndexOf("Set-NetFirewallAddressFilter", trackIdx, StringComparison.Ordinal);
+        var enableAfterTrack = script.IndexOf("Enable-NetFirewallRule -Name $name", trackIdx, StringComparison.Ordinal);
+        Assert.True(addrAfterTrack >= 0 && enableAfterTrack > addrAfterTrack);
+        Assert.Contains("Restore-RuleSnap", script, StringComparison.Ordinal);
     }
 
     [Fact]

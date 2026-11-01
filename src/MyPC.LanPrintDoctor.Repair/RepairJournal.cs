@@ -151,13 +151,15 @@ public sealed class RepairJournal
 
     private void LoadFile(string path)
     {
+        // Missing file = fresh session (Clean). Existing empty/whitespace = CORRUPT (fail-closed).
         if (!File.Exists(path)) return;
         try
         {
             var text = File.ReadAllText(path);
             if (string.IsNullOrWhiteSpace(text))
             {
-                // Empty file is not a valid journal of completed work — treat as corrupt if non-empty path existed with junk.
+                IsCorrupt = true;
+                CorruptDetail = "repair-journal.json exists but is empty/whitespace";
                 return;
             }
 
@@ -191,6 +193,8 @@ public sealed class RepairJournal
 
     private void Persist()
     {
+        if (IsCorrupt)
+            throw new InvalidOperationException("CORRUPT_JOURNAL: refusing to overwrite corrupt repair-journal.json");
         var tmp = _path + ".tmp";
         File.WriteAllText(tmp, ToJson());
         File.Copy(tmp, _path, overwrite: true);

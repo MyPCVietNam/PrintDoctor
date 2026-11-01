@@ -1,7 +1,14 @@
-# DEFECT-FIX-MATRIX — P1.1 + HF1 + HF2 + HF2 correction
+# DEFECT-FIX-MATRIX — P1.1 + HF1 + HF2 + corrections
 
 Baseline: PR #1 `1647875`. PR #2 branch `fix/p11-diagnostic-accuracy-safe-repair`.
-HF2 correction baseline HEAD: `a33d201`.
+Final-two baseline HEAD: `8cf4845`.
+
+## Final two safety defects (v1.1.4)
+
+| Defect ID | Severity | Status | File/function | After | Test | Result | Remaining risk |
+|-----------|----------|--------|---------------|-------|------|--------|----------------|
+| D1 Mutation-before-track | BLOCKER | FIXED (code+unit+PS fixture) | `EnableScopedIcmpEchoAsync`, `EnableFileAndPrinterSharingAsync` | Snapshot+`$tracked` before first Set-*; controlled Restore-RuleSnap; UNCERTAIN on ROLLBACK_FAIL | D1_* | UNIT_PASS | Live Win mutation lab **BLOCKED** |
+| D2 Empty journal fail-open | BLOCKER | FIXED (code+unit) | `RepairJournal.LoadFile` | empty/whitespace file ⇒ CorruptJournal; no overwrite; executor BLOCKED | D2_* | UNIT_PASS | — |
 
 ## HF2 final correction
 
