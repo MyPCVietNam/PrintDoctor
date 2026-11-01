@@ -2,6 +2,12 @@ using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 
 namespace MyPC.LanPrintDoctor.Abstractions.Repair;
 
+public enum RepairTargetMachine
+{
+    Local,
+    RemoteUnsupported
+}
+
 public sealed class RepairPrerequisiteResult
 {
     public bool CanProceed { get; init; }
@@ -40,6 +46,7 @@ public sealed class RollbackResult
 public sealed class RepairResult
 {
     public required string OperationId { get; init; }
+    public string? TransactionId { get; init; }
     public bool Applied { get; init; }
     public bool Verified { get; init; }
     public DiagnosticStatus Status { get; init; }
@@ -50,6 +57,8 @@ public sealed class RepairResult
     public bool RollbackVerified { get; init; }
     public bool RollbackUnsupported { get; init; }
     public bool NotImplemented { get; init; }
+    public bool UncertainState { get; init; }
+    public bool ServerActionRequired { get; init; }
 }
 
 public interface IRepairOperation
@@ -62,6 +71,11 @@ public interface IRepairOperation
 
     /// <summary>False when rollback is inherently impossible (e.g. service already started).</summary>
     bool SupportsRollback { get; }
+
+    /// <summary>Who must own this repair. Firewall inbound repairs are LocalServer.</summary>
+    RepairOwnerRole OwnerRole { get; }
+
+    RepairTargetMachine TargetMachine { get; }
 
     Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default);
     Task CollectEvidenceAsync(CancellationToken ct = default);

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.Firewall;
 using MyPC.LanPrintDoctor.Abstractions.Repair;
 using MyPC.LanPrintDoctor.Abstractions.Security;
@@ -9,19 +10,23 @@ public sealed class NetworkProfilePrivateRepair : IRepairOperation
 {
     private readonly INetworkProfileService _profiles;
     private readonly IElevationService _elevation;
+    private readonly int? _preferredInterfaceIndex;
     private List<NetworkConnectionProfile> _before = new();
     private int? _targetIndex;
 
-    public NetworkProfilePrivateRepair(INetworkProfileService profiles, IElevationService elevation)
+    public NetworkProfilePrivateRepair(INetworkProfileService profiles, IElevationService elevation, int? preferredInterfaceIndex = null)
     {
         _profiles = profiles;
         _elevation = elevation;
+        _preferredInterfaceIndex = preferredInterfaceIndex;
     }
 
     public string OperationId => "NET-PROFILE-PRIVATE";
     public string Title => "Set network category to Private (user confirmed trusted LAN)";
     public bool IsImplemented => true;
     public bool SupportsRollback => true;
+    public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalAny;
+    public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
 
     public async Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
     {
@@ -56,14 +61,18 @@ public sealed class NetworkProfilePrivateRepair : IRepairOperation
             };
         }
 
-        var publicProfile = profiles.FirstOrDefault(p => p.NetworkCategory.Equals("Public", StringComparison.OrdinalIgnoreCase));
+        NetworkConnectionProfile? publicProfile = null;
+        if (_preferredInterfaceIndex is int pref)
+            publicProfile = profiles.FirstOrDefault(p => p.InterfaceIndex == pref
+                && p.NetworkCategory.Equals("Public", StringComparison.OrdinalIgnoreCase));
+        publicProfile ??= profiles.FirstOrDefault(p => p.NetworkCategory.Equals("Public", StringComparison.OrdinalIgnoreCase));
         if (publicProfile is null)
         {
             return new RepairPrerequisiteResult
             {
                 CanProceed = false,
                 RequiresAdmin = true,
-                Reason = "No Public profile found to change."
+                Reason = "No Public profile found to change on the selected/primary interface."
             };
         }
 

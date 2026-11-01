@@ -148,6 +148,7 @@ public class P11RegressionTests
             RuleId = "FPS-ICMP4-ERQ-In",
             Enabled = true,
             Direction = "Inbound",
+            Action = "Allow",
             Protocol = "ICMPv4",
             Profiles = "Private",
             RemoteAddresses = "LocalSubnet"
@@ -159,10 +160,24 @@ public class P11RegressionTests
             RuleId = "FPS-ICMP4-ERQ-In",
             Enabled = true,
             Direction = "Inbound",
-            Protocol = "ICMPv4"
+            Action = "Allow",
+            Protocol = "ICMPv4",
+            Profiles = "Private",
+            RemoteAddresses = "LocalSubnet"
         };
         Assert.True(FirewallIcmpEchoRepair.IsEnabledScopedIcmp(vi));
         Assert.True(FirewallIcmpEchoRepair.IsEnabledScopedIcmp(en));
+        Assert.False(FirewallRuleScope.IsScopedIcmpEcho(new FirewallRuleInfo
+        {
+            Name = en.Name,
+            RuleId = en.RuleId,
+            Enabled = true,
+            Direction = "Inbound",
+            Action = "Allow",
+            Protocol = "ICMPv4",
+            Profiles = "Public",
+            RemoteAddresses = "Any"
+        }));
     }
 
     [Fact]
@@ -452,8 +467,9 @@ public class P11RegressionTests
         }
 
         var diag = Read("Diagnostics.json");
-        Assert.DoesNotContain("SECRET-PC", diag);
-        Assert.DoesNotContain("AA:BB:CC:DD:EE:FF", diag);
+            Assert.DoesNotContain("SECRET-PC", diag);
+        Assert.DoesNotContain("AA:BB:CC:DD:EE:FF", diag, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("192.168.1.20", diag);
         var repairs = Read("Repairs.json");
         Assert.Contains("FW-ICMP-ECHO", repairs);
         Assert.DoesNotContain("placeholder", repairs, StringComparison.OrdinalIgnoreCase);
@@ -528,6 +544,8 @@ public class P11RegressionTests
         public string Title => "Irreversible";
         public bool IsImplemented => true;
         public bool SupportsRollback => false;
+        public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalAny;
+        public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
 
         public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
             => Task.FromResult(new RepairPrerequisiteResult { CanProceed = true });
@@ -563,6 +581,8 @@ public class P11RegressionTests
         public string Title => "Token";
         public bool IsImplemented => true;
         public bool SupportsRollback => true;
+        public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalAny;
+        public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
 
         public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
             => Task.FromResult(new RepairPrerequisiteResult { CanProceed = true });

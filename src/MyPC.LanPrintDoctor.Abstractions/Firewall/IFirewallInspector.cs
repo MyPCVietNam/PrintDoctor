@@ -28,11 +28,14 @@ public sealed class FirewallRuleInfo
     public string? Protocol { get; init; }
     public string? LocalPorts { get; init; }
     public string? RemotePorts { get; init; }
+    public string? LocalAddresses { get; init; }
     public string? RemoteAddresses { get; init; }
     public string? Profiles { get; init; }
     public string? Program { get; init; }
     public string? Grouping { get; init; }
     public string? RuleId { get; init; }
+    public string? PolicyStore { get; init; }
+    public string? IcmpTypesAndCodes { get; init; }
 }
 
 public sealed class ThirdPartySecurityProduct

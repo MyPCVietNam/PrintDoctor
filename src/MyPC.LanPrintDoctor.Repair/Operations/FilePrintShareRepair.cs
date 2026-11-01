@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.Firewall;
 using MyPC.LanPrintDoctor.Abstractions.Repair;
 using MyPC.LanPrintDoctor.Abstractions.Security;
@@ -6,7 +7,7 @@ using MyPC.LanPrintDoctor.Abstractions.Security;
 namespace MyPC.LanPrintDoctor.Repair.Operations;
 
 /// <summary>
-/// Distinct from ICMP repair — enables File and Printer Sharing inbound group via language-independent group id.
+/// Enables only named FPS inbound rules after Private+LocalSubnet — never Enable-NetFirewallRule -Group.
 /// </summary>
 public sealed class FilePrintShareRepair : IRepairOperation
 {
@@ -21,9 +22,11 @@ public sealed class FilePrintShareRepair : IRepairOperation
     }
 
     public string OperationId => "FW-FILE-PRINT-SHARE";
-    public string Title => "Enable File and Printer Sharing (Private)";
+    public string Title => "Enable File and Printer Sharing (Private/LocalSubnet)";
     public bool IsImplemented => true;
     public bool SupportsRollback => true;
+    public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalAny;
+    public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
 
     public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
     {
@@ -47,13 +50,15 @@ public sealed class FilePrintShareRepair : IRepairOperation
         {
             OperationId = OperationId,
             Title = Title,
-            Description = "Enable File and Printer Sharing inbound rules for Private profile using FirewallAPI group id (works on VI/EN Windows). Does not enable SMB1 or disable signing.",
+            Description = "Enable approved FPS inbound rules by name (SMB/Spooler/NBSession) for Private+LocalSubnet only. Does NOT call Enable-NetFirewallRule -Group.",
             Changes = new[]
             {
-                "Enable-NetFirewallRule -Group '@FirewallAPI.dll,-28502' for Private",
-                "Scope remains profile-bound; firewall stays on"
+                "Per-rule Set-NetFirewallRule -Profile Private before Enable",
+                "RemoteAddress=LocalSubnet where supported",
+                "Skip GPO-managed rules",
+                "No Public/Domain enablement"
             },
-            Risks = new[] { "Exposes SMB/printer sharing ports on Private profile" },
+            Risks = new[] { "Exposes SMB/printer sharing on Private/LocalSubnet" },
             Reversible = true
         });
 
@@ -70,19 +75,24 @@ public sealed class FilePrintShareRepair : IRepairOperation
     {
         var ok = await _firewall.EnableFileAndPrinterSharingAsync(ct);
         if (!ok)
-            throw new InvalidOperationException("Failed to enable File and Printer Sharing firewall group.");
+            throw new InvalidOperationException("Failed to enable scoped File and Printer Sharing rules.");
     }
 
     public async Task<bool> VerifyAsync(CancellationToken ct = default)
     {
         var rules = await _firewall.GetRelevantRulesAsync(ct);
-        return rules.Any(r =>
-            r.Enabled &&
-            r.Direction.Contains("In", StringComparison.OrdinalIgnoreCase) &&
-            ((r.Grouping?.Contains("FirewallAPI.dll,-28502", StringComparison.OrdinalIgnoreCase) ?? false)
-             || (r.Grouping?.Contains("File and Printer", StringComparison.OrdinalIgnoreCase) ?? false)
-             || (r.Grouping?.Contains("Tệp và máy in", StringComparison.OrdinalIgnoreCase) ?? false)
-             || (r.RuleId?.StartsWith("FPS-", StringComparison.OrdinalIgnoreCase) ?? false)));
+        // At least one scoped FPS rule; and no newly enabled Public-only FPS rule claimed as success
+        var scoped = rules.Where(FirewallRuleScope.IsScopedFilePrintShareRule).ToList();
+        if (scoped.Count == 0) return false;
+        // Fail verify if any enabled FPS inbound rule is Public without Private
+        var badPublic = rules.Any(r =>
+            r.Enabled
+            && r.Direction.Contains("In", StringComparison.OrdinalIgnoreCase)
+            && ((r.RuleId ?? "").StartsWith("FPS-", StringComparison.OrdinalIgnoreCase)
+                || (r.Grouping?.Contains("FirewallAPI.dll,-28502") ?? false))
+            && (r.Profiles?.Contains("Public", StringComparison.OrdinalIgnoreCase) ?? false)
+            && !(r.Profiles?.Contains("Private", StringComparison.OrdinalIgnoreCase) ?? false));
+        return !badPublic;
     }
 
     public async Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default)
@@ -93,7 +103,9 @@ public sealed class FilePrintShareRepair : IRepairOperation
             Attempted = true,
             Succeeded = restored,
             Verified = restored,
-            Message = restored ? "Sharing firewall rules restored from backup." : "Sharing rollback not verified."
+            Message = restored
+                ? "Sharing firewall rules restored and re-read matched backup."
+                : "Sharing rollback not verified against backup."
         };
     }
 }

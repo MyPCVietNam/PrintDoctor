@@ -1,3 +1,4 @@
+using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.Repair;
 using MyPC.LanPrintDoctor.Abstractions.Security;
 using MyPC.LanPrintDoctor.Abstractions.Services;
@@ -24,6 +25,8 @@ public sealed class ServiceStartRepair : IRepairOperation
     public string Title { get; }
     public bool IsImplemented => true;
     public bool SupportsRollback => false; // starting a required service is not auto-stopped
+    public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalAny;
+    public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
 
     public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
         => Task.FromResult(new RepairPrerequisiteResult

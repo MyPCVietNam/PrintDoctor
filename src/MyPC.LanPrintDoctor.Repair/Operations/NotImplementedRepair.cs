@@ -1,3 +1,4 @@
+using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.Repair;
 
 namespace MyPC.LanPrintDoctor.Repair.Operations;
@@ -18,6 +19,8 @@ public sealed class NotImplementedRepair : IRepairOperation
     public string Title { get; }
     public bool IsImplemented => false;
     public bool SupportsRollback => false;
+    public RepairOwnerRole OwnerRole => RepairOwnerRole.None;
+    public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
 
     public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
         => Task.FromResult(new RepairPrerequisiteResult

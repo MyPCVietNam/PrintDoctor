@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
 using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
+using MyPC.LanPrintDoctor.Abstractions.Network;
 using MyPC.LanPrintDoctor.Abstractions.Repair;
 using MyPC.LanPrintDoctor.Abstractions.Validation;
 using MyPC.LanPrintDoctor.Core.Compare;
@@ -198,15 +199,36 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        var pick = repairable[0];
+        var pick = repairable.FirstOrDefault(f => f.RepairOwner is not RepairOwnerRole.ServerActionRequired and not RepairOwnerRole.None)
+                   ?? repairable[0];
+        if (pick.RepairOwner == RepairOwnerRole.ServerActionRequired || string.IsNullOrWhiteSpace(pick.RepairId))
+        {
+            StatusText = "SERVER_ACTION_REQUIRED: run PrintDoctor on the server — local client firewall will not be modified for a remote inbound issue.";
+            MessageBox.Show(StatusText, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
         var (net, fw, svc, smb, prn, sha, elev, profiles) = PlatformComposition.CreateWindowsStack();
         _ = (net, smb, prn, sha);
-        var op = CreateRepair(pick.RepairId!, fw, svc, elev, profiles);
+        var primaryIf = _lastSnapshot.Adapters
+            .Where(a => a.IsUp && a.Kind is AdapterKind.Ethernet or AdapterKind.WiFi)
+            .OrderBy(a => a.InterfaceMetric ?? int.MaxValue)
+            .ThenBy(a => a.InterfaceIndex)
+            .Select(a => (int?)a.InterfaceIndex)
+            .FirstOrDefault();
+        var op = CreateRepair(pick.RepairId!, fw, svc, elev, profiles, primaryIf);
 
         if (!op.IsImplemented)
         {
             StatusText = $"NOT_IMPLEMENTED: {op.OperationId} — repair disabled (no fake success).";
             MessageBox.Show(StatusText, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (op.OwnerRole == RepairOwnerRole.LocalServer && _lastSnapshot.Role != MachineRole.Server)
+        {
+            StatusText = "SERVER_ACTION_REQUIRED: this repair owns server-local firewall state.";
+            MessageBox.Show(StatusText, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -234,9 +256,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             var journalDir = Path.Combine(_exporter.DefaultRoot, "Journals", _lastSnapshot.SessionId);
             _lastJournal = new RepairJournal(journalDir);
+            if (_lastJournal.GetRecoveryState() == RepairRecoveryState.UncertainState)
+            {
+                StatusText = "UNCERTAIN_STATE: prior repair ApplyStarted without completion — review journal before another repair.";
+                MessageBox.Show(StatusText, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
             var executor = new RepairExecutor(_lastJournal);
             var before = await op.PreviewChangesAsync();
-            var result = await executor.ExecuteAsync(op, userConfirmed: true);
+            var result = await executor.ExecuteAsync(op, userConfirmed: true, ct: default, localRole: _lastSnapshot.Role, findingOwner: pick.RepairOwner);
 
             _lastSnapshot.RepairsJson = _lastJournal.ToJson();
             _lastSnapshot.BeforeAfterJson = System.Text.Json.JsonSerializer.Serialize(new
@@ -274,12 +302,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Abstractions.Firewall.IFirewallInspector fw,
         Abstractions.Services.IWindowsServiceInspector svc,
         Abstractions.Security.IElevationService elev,
-        Abstractions.Firewall.INetworkProfileService profiles)
+        Abstractions.Firewall.INetworkProfileService profiles,
+        int? preferredInterfaceIndex = null)
         => repairId switch
         {
             "FW-ICMP-ECHO" => new FirewallIcmpEchoRepair(fw, elev),
             "FW-FILE-PRINT-SHARE" => new FilePrintShareRepair(fw, elev),
-            "NET-PROFILE-PRIVATE" => new NetworkProfilePrivateRepair(profiles, elev),
+            "NET-PROFILE-PRIVATE" => new NetworkProfilePrivateRepair(profiles, elev, preferredInterfaceIndex),
             "SVC-SPOOLER-START" => new ServiceStartRepair("Spooler", "SVC-SPOOLER-START", "Start Print Spooler", svc, elev),
             "SVC-LANMANSERVER-START" => new ServiceStartRepair("LanmanServer", "SVC-LANMANSERVER-START", "Start LanmanServer", svc, elev),
             "SVC-LANMANWORKSTATION-START" => new ServiceStartRepair("LanmanWorkstation", "SVC-LANMANWORKSTATION-START", "Start LanmanWorkstation", svc, elev),

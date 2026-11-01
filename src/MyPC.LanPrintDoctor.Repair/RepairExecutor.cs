@@ -9,14 +9,61 @@ public sealed class RepairExecutor
 
     public RepairExecutor(RepairJournal journal) => _journal = journal;
 
-    public async Task<RepairResult> ExecuteAsync(IRepairOperation operation, bool userConfirmed, CancellationToken ct = default)
+    public async Task<RepairResult> ExecuteAsync(
+        IRepairOperation operation,
+        bool userConfirmed,
+        CancellationToken ct = default,
+        MachineRole? localRole = null,
+        RepairOwnerRole? findingOwner = null)
     {
-        if (!operation.IsImplemented)
+        var tx = Guid.NewGuid().ToString("N");
+
+        // Prior crash detection — never auto-claim recovered.
+        if (_journal.GetRecoveryState() == RepairRecoveryState.UncertainState)
         {
-            _journal.Record(operation.OperationId, "NotImplemented", false, "Repair is NOT_IMPLEMENTED and disabled.");
+            _journal.Record(tx, operation.OperationId, "UncertainStateDetected", false,
+                "Prior ApplyStarted without Applied/Verified/Rollback — UNCERTAIN_STATE; operator must review.");
+        }
+
+        if (findingOwner == RepairOwnerRole.ServerActionRequired
+            || operation.OwnerRole == RepairOwnerRole.ServerActionRequired
+            || operation.TargetMachine == RepairTargetMachine.RemoteUnsupported)
+        {
+            _journal.Record(tx, operation.OperationId, "ServerActionRequired", false);
             return new RepairResult
             {
                 OperationId = operation.OperationId,
+                TransactionId = tx,
+                Applied = false,
+                Verified = false,
+                ServerActionRequired = true,
+                Status = DiagnosticStatus.Blocked,
+                Message = "SERVER_ACTION_REQUIRED: repair targets another machine; local apply blocked."
+            };
+        }
+
+        if (localRole is MachineRole role && !OwnerAllows(operation.OwnerRole, role))
+        {
+            _journal.Record(tx, operation.OperationId, "OwnerMismatch", false, $"local={role}, owner={operation.OwnerRole}");
+            return new RepairResult
+            {
+                OperationId = operation.OperationId,
+                TransactionId = tx,
+                Applied = false,
+                Verified = false,
+                ServerActionRequired = operation.OwnerRole == RepairOwnerRole.LocalServer && role == MachineRole.Client,
+                Status = DiagnosticStatus.Blocked,
+                Message = $"Repair owner {operation.OwnerRole} does not match local role {role}."
+            };
+        }
+
+        if (!operation.IsImplemented)
+        {
+            _journal.Record(tx, operation.OperationId, "NotImplemented", false, "Repair is NOT_IMPLEMENTED and disabled.");
+            return new RepairResult
+            {
+                OperationId = operation.OperationId,
+                TransactionId = tx,
                 Applied = false,
                 Verified = false,
                 NotImplemented = true,
@@ -30,6 +77,7 @@ public sealed class RepairExecutor
             return new RepairResult
             {
                 OperationId = operation.OperationId,
+                TransactionId = tx,
                 Applied = false,
                 Verified = false,
                 Status = DiagnosticStatus.Blocked,
@@ -38,12 +86,13 @@ public sealed class RepairExecutor
         }
 
         var prereq = await operation.CheckPrerequisitesAsync(ct);
-        _journal.Record(operation.OperationId, "Prerequisites", prereq.CanProceed, prereq.Reason);
+        _journal.Record(tx, operation.OperationId, "Prerequisites", prereq.CanProceed, prereq.Reason);
         if (prereq.NotImplemented || !operation.IsImplemented)
         {
             return new RepairResult
             {
                 OperationId = operation.OperationId,
+                TransactionId = tx,
                 Applied = false,
                 Verified = false,
                 NotImplemented = true,
@@ -57,6 +106,7 @@ public sealed class RepairExecutor
             return new RepairResult
             {
                 OperationId = operation.OperationId,
+                TransactionId = tx,
                 Applied = false,
                 Verified = false,
                 Status = DiagnosticStatus.Blocked,
@@ -65,30 +115,34 @@ public sealed class RepairExecutor
         }
 
         await operation.CollectEvidenceAsync(ct);
-        _journal.Record(operation.OperationId, "Evidence", true);
+        _journal.Record(tx, operation.OperationId, "Evidence", true);
         var preview = await operation.PreviewChangesAsync(ct);
-        _journal.Record(operation.OperationId, "Preview", true, preview.Description);
+        _journal.Record(tx, operation.OperationId, "Preview", true, preview.Description);
 
         RepairBackup? backup = null;
         try
         {
             backup = await operation.BackupAsync(ct);
-            _journal.Record(operation.OperationId, "Backup", true, backup.BackupId, backup.BackupId, backup.PayloadJson);
-            await operation.ApplyAsync(ct);
-            _journal.Record(operation.OperationId, "Apply", true);
+            _journal.Record(tx, operation.OperationId, "Backup", true, backup.BackupId, backup.BackupId, backup.PayloadJson);
 
-            // Verification must not be skipped; cancelled token after Apply uses a fresh token for verify/rollback.
+            // Persist BEFORE mutation
+            _journal.Record(tx, operation.OperationId, "ApplyStarted", true, "About to mutate system state");
+            await operation.ApplyAsync(ct);
+            _journal.Record(tx, operation.OperationId, "Applied", true);
+            _journal.Record(tx, operation.OperationId, "Apply", true);
+
             using var verifyCts = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken.None);
             verifyCts.CancelAfter(TimeSpan.FromMinutes(2));
             var verified = await operation.VerifyAsync(verifyCts.Token);
-            _journal.Record(operation.OperationId, "Verify", verified);
+            _journal.Record(tx, operation.OperationId, "Verify", verified);
 
             if (!verified)
             {
-                var rb = await SafeRollbackAsync(operation, backup, preview.Reversible && operation.SupportsRollback);
+                var rb = await SafeRollbackAsync(tx, operation, backup, preview.Reversible && operation.SupportsRollback);
                 return new RepairResult
                 {
                     OperationId = operation.OperationId,
+                    TransactionId = tx,
                     Applied = true,
                     Verified = false,
                     BackupId = backup.BackupId,
@@ -104,6 +158,7 @@ public sealed class RepairExecutor
             return new RepairResult
             {
                 OperationId = operation.OperationId,
+                TransactionId = tx,
                 Applied = true,
                 Verified = true,
                 BackupId = backup.BackupId,
@@ -113,13 +168,14 @@ public sealed class RepairExecutor
         }
         catch (Exception ex)
         {
-            _journal.Record(operation.OperationId, "Error", false, ex.Message);
+            _journal.Record(tx, operation.OperationId, "Error", false, ex.Message);
             if (backup is not null)
             {
-                var rb = await SafeRollbackAsync(operation, backup, operation.SupportsRollback);
+                var rb = await SafeRollbackAsync(tx, operation, backup, operation.SupportsRollback);
                 return new RepairResult
                 {
                     OperationId = operation.OperationId,
+                    TransactionId = tx,
                     Applied = false,
                     Verified = false,
                     BackupId = backup.BackupId,
@@ -135,6 +191,7 @@ public sealed class RepairExecutor
             return new RepairResult
             {
                 OperationId = operation.OperationId,
+                TransactionId = tx,
                 Applied = false,
                 Verified = false,
                 Status = DiagnosticStatus.Fail,
@@ -143,7 +200,17 @@ public sealed class RepairExecutor
         }
     }
 
-    private async Task<RollbackResult> SafeRollbackAsync(IRepairOperation operation, RepairBackup backup, bool supported)
+    private static bool OwnerAllows(RepairOwnerRole owner, MachineRole local) => owner switch
+    {
+        RepairOwnerRole.None => false,
+        RepairOwnerRole.ServerActionRequired => false,
+        RepairOwnerRole.LocalAny => true,
+        RepairOwnerRole.LocalServer => local == MachineRole.Server,
+        RepairOwnerRole.LocalClient => local == MachineRole.Client,
+        _ => false
+    };
+
+    private async Task<RollbackResult> SafeRollbackAsync(string tx, IRepairOperation operation, RepairBackup backup, bool supported)
     {
         if (!supported)
         {
@@ -155,22 +222,20 @@ public sealed class RepairExecutor
                 Unsupported = true,
                 Message = "Rollback not supported for this operation; state may not be reversible."
             };
-            _journal.Record(operation.OperationId, "Rollback", false, unsupported.Message);
+            _journal.Record(tx, operation.OperationId, "Rollback", false, unsupported.Message);
             return unsupported;
         }
 
         try
         {
-            // Never reuse a cancelled caller token for rollback.
             var result = await operation.RollbackAsync(backup, CancellationToken.None);
-            _journal.Record(operation.OperationId, "Rollback", result.Succeeded && result.Verified,
+            _journal.Record(tx, operation.OperationId, "Rollback", result.Succeeded && result.Verified,
                 result.Message ?? (result.Verified ? "Rollback verified" : "Rollback attempted"));
-            // Only claim RolledBack when Succeeded && Verified
             return result;
         }
         catch (Exception ex)
         {
-            _journal.Record(operation.OperationId, "Rollback", false, ex.Message);
+            _journal.Record(tx, operation.OperationId, "Rollback", false, ex.Message);
             return new RollbackResult
             {
                 Attempted = true,

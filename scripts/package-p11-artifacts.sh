@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package P1.1 delivery artifacts against baseline commit (merged PR #1).
+# Package P1.1 / HF1 delivery artifacts against baseline commit (merged PR #1).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/artifacts/delivery-p11"
@@ -13,6 +13,7 @@ CHANGED="$OUT/MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip"
 RELEASE="$OUT/MyPC-PrintDoctor-P11-RELEASE-x64.zip"
 
 rm -f "$FULL" "$CHANGED" "$RELEASE"
+rm -f "$OUT/RELEASE_BLOCKED.txt"
 
 # --- FULL SOURCE ---
 cd "$ROOT"
@@ -26,15 +27,11 @@ STAGE="$OUT/_changed_stage"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cd "$ROOT"
-# List changed/added files vs baseline (tracked + untracked via status after commit)
 mapfile -t FILES < <(git diff --name-only --diff-filter=ACMRT "$BASELINE" HEAD)
-# Also include untracked if any remain
 while IFS= read -r f; do
   [[ -n "$f" ]] || continue
   FILES+=("$f")
 done < <(git ls-files --others --exclude-standard)
-
-# Deduplicate
 mapfile -t FILES < <(printf '%s\n' "${FILES[@]}" | awk 'NF' | sort -u)
 
 for f in "${FILES[@]}"; do
@@ -43,7 +40,6 @@ for f in "${FILES[@]}"; do
   cp -a "$ROOT/$f" "$STAGE/$f"
 done
 
-# Always include delivery docs at docs/ root for the package
 for doc in DEFECT-FIX-MATRIX.md CHANGELOG-P11.md TEST-REPORT-P11.md BUILD-INFO-P11.md MANIFEST-P11.json; do
   if [[ -f "$ROOT/docs/$doc" ]]; then
     mkdir -p "$STAGE/docs"
@@ -54,45 +50,50 @@ done
 cd "$STAGE"
 zip -rq "$CHANGED" .
 
-# --- RELEASE: attempt publish (may be multi-file self-contained; WPF needs windows targeting) ---
+# --- RELEASE: only real publish with EXE verification ---
 PUB="$ROOT/artifacts/publish/win-x64"
 mkdir -p "$PUB"
 set +e
 dotnet publish "$ROOT/src/MyPC.LanPrintDoctor/MyPC.LanPrintDoctor.csproj" \
   -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false \
-  -o "$PUB" 2>"$OUT/publish.log"
+  -o "$PUB" >"$OUT/publish.log" 2>&1
 PUB_EC=$?
 set -e
 
-if [[ $PUB_EC -eq 0 && -d "$PUB" ]]; then
-  (
-    cd "$PUB"
-    zip -rq "$RELEASE" .
-  )
-  # Annotate: multi-file self-contained, not single EXE
-  echo "PublishSingleFile=false — self-contained multi-file release (MyPC.LanPrintDoctor.exe + runtime deps)." > "$OUT/RELEASE-NOTE.txt"
+EXE="$PUB/MyPC.LanPrintDoctor.exe"
+if [[ $PUB_EC -eq 0 && -f "$EXE" ]]; then
+  # Require runtime dependency presence (multi-file self-contained)
+  if ! find "$PUB" -name 'coreclr.dll' -o -name 'System.Private.CoreLib.dll' | grep -q .; then
+    echo "RELEASE_BLOCKED: publish output missing runtime dependencies" | tee "$OUT/RELEASE_BLOCKED.txt"
+    echo "PublishSingleFile=false self-contained multi-file expected." >> "$OUT/RELEASE_BLOCKED.txt"
+  else
+    (
+      cd "$PUB"
+      zip -rq "$RELEASE" .
+    )
+    echo "PublishSingleFile=false — self-contained multi-file release (EXE + runtime deps)." > "$OUT/RELEASE-NOTE.txt"
+    sha256sum "$EXE" | tee -a "$OUT/RELEASE-NOTE.txt"
+  fi
 else
-  echo "Publish blocked/failed on this host (exit=$PUB_EC). See publish.log. RELEASE ZIP will be produced by Windows CI." | tee "$OUT/RELEASE-NOTE.txt"
-  # Minimal stub so delivery lists the artifact name with explanation
-  echo "WINDOWS_CI_REQUIRED" > "$OUT/RELEASE-PLACEHOLDER.txt"
-  zip -jq "$RELEASE" "$OUT/RELEASE-PLACEHOLDER.txt" "$OUT/RELEASE-NOTE.txt" "$OUT/publish.log"
+  echo "RELEASE_BLOCKED: Windows publish failed or EXE missing (exit=$PUB_EC)." | tee "$OUT/RELEASE_BLOCKED.txt"
+  echo "Do not treat any placeholder as a release. Only GitHub windows-latest CI may mint an authoritative RELEASE ZIP." >> "$OUT/RELEASE_BLOCKED.txt"
+  # Intentionally do NOT create MyPC-PrintDoctor-P11-RELEASE-x64.zip
 fi
 
-# --- Manifests / hashes ---
 cat > "$OUT/MANIFEST.json" <<EOF
 {
   "product": "MyPC LAN & Print Doctor",
-  "phase": "P1.1",
-  "version": "1.1.0",
+  "phase": "P1.1-HF1",
+  "version": "1.1.1",
   "baselineCommit": "$BASELINE",
   "commit": "$COMMIT",
   "generatedUtc": "$STAMP",
   "publishSingleFile": false,
   "publishShape": "self-contained multi-file win-x64",
+  "releasePresent": $( [[ -f "$RELEASE" ]] && echo true || echo false ),
   "artifacts": [
     "MyPC-PrintDoctor-P11-FULL-SOURCE.zip",
     "MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip",
-    "MyPC-PrintDoctor-P11-RELEASE-x64.zip",
     "MANIFEST.json",
     "CHANGELOG.md",
     "DEFECT-FIX-MATRIX.md",
@@ -121,14 +122,11 @@ cp "$ROOT/docs/BUILD-INFO-P11.md" "$OUT/BUILD-INFO.md" 2>/dev/null || true
 
 (
   cd "$OUT"
-  sha256sum MyPC-PrintDoctor-P11-FULL-SOURCE.zip \
-            MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip \
-            MyPC-PrintDoctor-P11-RELEASE-x64.zip \
-            MANIFEST.json \
-            CHANGELOG.md \
-            DEFECT-FIX-MATRIX.md \
-            TEST-REPORT.md \
-            BUILD-INFO.md 2>/dev/null | tee SHA256.txt
+  FILES_HASH=(MyPC-PrintDoctor-P11-FULL-SOURCE.zip MyPC-PrintDoctor-P11-CHANGED-SOURCE.zip MANIFEST.json CHANGELOG.md DEFECT-FIX-MATRIX.md TEST-REPORT.md BUILD-INFO.md)
+  if [[ -f MyPC-PrintDoctor-P11-RELEASE-x64.zip ]]; then
+    FILES_HASH+=(MyPC-PrintDoctor-P11-RELEASE-x64.zip)
+  fi
+  sha256sum "${FILES_HASH[@]}" 2>/dev/null | tee SHA256.txt
 )
 
 echo "OUT=$OUT"

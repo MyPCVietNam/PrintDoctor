@@ -456,6 +456,8 @@ public class DecisionEngineScenarioTests
         public string Title => "Scriptable test repair";
         public bool IsImplemented => true;
         public bool SupportsRollback => true;
+        public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalAny;
+        public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
 
         public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
             => Task.FromResult(new RepairPrerequisiteResult { CanProceed = true, RequiresAdmin = false });

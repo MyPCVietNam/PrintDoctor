@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.Firewall;
 using MyPC.LanPrintDoctor.Abstractions.Repair;
 using MyPC.LanPrintDoctor.Abstractions.Security;
@@ -6,8 +7,7 @@ using MyPC.LanPrintDoctor.Abstractions.Security;
 namespace MyPC.LanPrintDoctor.Repair.Operations;
 
 /// <summary>
-/// Real ICMP Echo repair: enables FPS-ICMP4-ERQ-In (or equivalent) for Private/LocalSubnet.
-/// No-op Apply/Verify defaults are intentionally removed.
+/// Local-server ICMP Echo repair: Private + LocalSubnet only. Never group-enable.
 /// </summary>
 public sealed class FirewallIcmpEchoRepair : IRepairOperation
 {
@@ -25,6 +25,8 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
     public string Title => "Enable scoped ICMP Echo Request rule";
     public bool IsImplemented => true;
     public bool SupportsRollback => true;
+    public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalServer;
+    public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
 
     public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
     {
@@ -48,16 +50,16 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
         {
             OperationId = OperationId,
             Title = Title,
-            Description = "Enable ICMPv4 Echo Request allow rule scoped to LocalSubnet for Private profile only. Does not disable firewall or widen to Any.",
+            Description = "Enable FPS-ICMP4-ERQ-In only after setting Profile=Private and RemoteAddress=LocalSubnet. Does not enable group-wide rules or Public/Domain.",
             Changes = new[]
             {
-                "Target rule id FPS-ICMP4-ERQ-In (language-independent)",
-                "Profile=Private",
-                "Protocol=ICMPv4 Echo Request",
-                "RemoteAddress=LocalSubnet",
-                "Direction=Inbound Action=Allow"
+                "Target rule id FPS-ICMP4-ERQ-In",
+                "Set Profile=Private BEFORE Enable",
+                "Set RemoteAddress=LocalSubnet BEFORE Enable",
+                "Direction=Inbound Action=Allow",
+                "Skip if PolicyStore indicates GPO"
             },
-            Risks = new[] { "Allows ICMP echo from local subnet on Private profile" },
+            Risks = new[] { "Allows ICMP echo from local subnet on Private profile only" },
             Reversible = true
         });
 
@@ -74,39 +76,30 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
     {
         var ok = await _firewall.EnableScopedIcmpEchoAsync(ct);
         if (!ok)
-            throw new InvalidOperationException("Failed to enable scoped ICMP Echo firewall rule.");
+            throw new InvalidOperationException("Failed to enable scoped ICMP Echo firewall rule (PowerShell did not return OK / scope verify failed).");
     }
 
     public async Task<bool> VerifyAsync(CancellationToken ct = default)
     {
         var rules = await _firewall.GetRelevantRulesAsync(ct);
-        return rules.Any(IsEnabledScopedIcmp);
+        // Strict: ALL scope conditions via FirewallRuleScope — not merely Enabled=true
+        return rules.Any(FirewallRuleScope.IsScopedIcmpEcho);
     }
 
     public async Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default)
     {
         var restored = await _firewall.RestoreIcmpEchoFromBackupAsync(backup.PayloadJson ?? "[]", ct);
-        var rules = await _firewall.GetRelevantRulesAsync(ct);
-        // Verify rollback: if backup said disabled, rule should not be enabled (or match prior state)
-        var verified = restored;
+        // Restore method itself re-reads and compares; do not claim verified on PowerShell OK alone
         return new RollbackResult
         {
             Attempted = true,
             Succeeded = restored,
-            Verified = verified,
-            Message = verified ? "ICMP rule state restored from backup." : "ICMP rollback could not be verified."
+            Verified = restored,
+            Message = restored
+                ? "ICMP rule attributes restored and re-read matched backup."
+                : "ICMP rollback could not be verified against backup snapshot."
         };
     }
 
-    public static bool IsEnabledScopedIcmp(FirewallRuleInfo r)
-    {
-        var id = r.RuleId ?? r.Name ?? "";
-        var display = r.DisplayName ?? r.Name ?? "";
-        var isIcmp = id.Contains("FPS-ICMP4-ERQ-In", StringComparison.OrdinalIgnoreCase)
-                     || (r.Protocol?.Contains("ICMP", StringComparison.OrdinalIgnoreCase) ?? false)
-                     || display.Contains("Echo Request", StringComparison.OrdinalIgnoreCase)
-                     || display.Contains("Yêu cầu Echo", StringComparison.OrdinalIgnoreCase); // VI
-        var inbound = r.Direction.Contains("In", StringComparison.OrdinalIgnoreCase);
-        return isIcmp && inbound && r.Enabled;
-    }
+    public static bool IsEnabledScopedIcmp(FirewallRuleInfo r) => FirewallRuleScope.IsScopedIcmpEcho(r);
 }

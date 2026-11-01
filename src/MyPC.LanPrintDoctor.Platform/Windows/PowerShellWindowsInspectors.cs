@@ -112,7 +112,10 @@ $result = foreach ($r in $rules) {
     Grouping = [string]$r.Group
     Protocol = [string]$port.Protocol
     LocalPorts = [string]$port.LocalPort
+    LocalAddresses = [string]$addr.LocalAddress
     RemoteAddresses = [string]$addr.RemoteAddress
+    IcmpTypesAndCodes = [string]$port.IcmpType
+    PolicyStore = [string]$r.PolicyStore
   }
 }
 $result | ConvertTo-Json -Compress
@@ -122,26 +125,31 @@ $result | ConvertTo-Json -Compress
         try
         {
             using var doc = JsonDocument.Parse(raw);
-            return PowerShellJson.Enumerate(doc.RootElement).Select(el => new FirewallRuleInfo
-            {
-                RuleId = PowerShellJson.GetString(el, "Name"),
-                Name = PowerShellJson.GetString(el, "DisplayName") ?? PowerShellJson.GetString(el, "Name") ?? "",
-                DisplayName = PowerShellJson.GetString(el, "DisplayName"),
-                Enabled = el.TryGetProperty("Enabled", out var en) && PowerShellJson.IsTruthy(en),
-                Direction = PowerShellJson.GetString(el, "Direction") ?? "",
-                Action = PowerShellJson.GetString(el, "Action") ?? "",
-                Profiles = PowerShellJson.GetString(el, "Profile"),
-                Grouping = PowerShellJson.GetString(el, "Grouping"),
-                Protocol = PowerShellJson.GetString(el, "Protocol"),
-                LocalPorts = PowerShellJson.GetString(el, "LocalPorts"),
-                RemoteAddresses = PowerShellJson.GetString(el, "RemoteAddresses")
-            }).ToList();
+            return PowerShellJson.Enumerate(doc.RootElement).Select(ParseRule).ToList();
         }
         catch
         {
             return Array.Empty<FirewallRuleInfo>();
         }
     }
+
+    internal static FirewallRuleInfo ParseRule(JsonElement el) => new()
+    {
+        RuleId = PowerShellJson.GetString(el, "Name") ?? PowerShellJson.GetString(el, "RuleId"),
+        Name = PowerShellJson.GetString(el, "DisplayName") ?? PowerShellJson.GetString(el, "Name") ?? "",
+        DisplayName = PowerShellJson.GetString(el, "DisplayName"),
+        Enabled = el.TryGetProperty("Enabled", out var en) && PowerShellJson.IsTruthy(en),
+        Direction = PowerShellJson.GetString(el, "Direction") ?? "",
+        Action = PowerShellJson.GetString(el, "Action") ?? "",
+        Profiles = PowerShellJson.GetString(el, "Profile") ?? PowerShellJson.GetString(el, "Profiles"),
+        Grouping = PowerShellJson.GetString(el, "Grouping"),
+        Protocol = PowerShellJson.GetString(el, "Protocol"),
+        LocalPorts = PowerShellJson.GetString(el, "LocalPorts"),
+        LocalAddresses = PowerShellJson.GetString(el, "LocalAddresses"),
+        RemoteAddresses = PowerShellJson.GetString(el, "RemoteAddresses"),
+        IcmpTypesAndCodes = PowerShellJson.GetString(el, "IcmpTypesAndCodes"),
+        PolicyStore = PowerShellJson.GetString(el, "PolicyStore")
+    };
 
     public async Task<IReadOnlyList<ThirdPartySecurityProduct>> DetectThirdPartySecurityAsync(CancellationToken ct = default)
     {
@@ -191,14 +199,21 @@ try {
 
     public async Task<bool> EnableScopedIcmpEchoAsync(CancellationToken ct = default)
     {
+        // Scope FIRST (while disabled / before enable) — never widen then narrow.
+        // Skip GPO-managed rules. ErrorAction Stop; require Private+LocalSubnet+Enabled.
         const string script = @"
-$r = Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction SilentlyContinue
-if (-not $r) { throw 'FPS-ICMP4-ERQ-In not found' }
-Enable-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In'
-Set-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -Profile Private -ErrorAction SilentlyContinue
-Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In') -RemoteAddress LocalSubnet -ErrorAction SilentlyContinue
-$v = Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In'
-if ($v.Enabled -ne $true) { throw 'verify failed' }
+$ErrorActionPreference = 'Stop'
+$r = Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -PolicyStore ActiveStore -ErrorAction Stop
+if ($r.PolicyStore -match 'GP|GroupPolicy') { throw 'GPO_MANAGED' }
+# Narrow before enable
+Set-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -Profile Private -Direction Inbound -Action Allow -ErrorAction Stop
+Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop) -RemoteAddress LocalSubnet -ErrorAction Stop
+Enable-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop
+$v = Get-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction Stop
+$addr = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $v -ErrorAction Stop
+if ($v.Enabled -ne 'True' -and $v.Enabled -ne $true) { throw 'NOT_ENABLED' }
+if ([string]$v.Profile -notmatch 'Private' -or [string]$v.Profile -match 'Public|Domain') { throw 'BAD_PROFILE:' + $v.Profile }
+if ([string]$addr.RemoteAddress -notmatch 'LocalSubnet') { throw 'BAD_REMOTE:' + $addr.RemoteAddress }
 'OK'
 ";
         var raw = await Run(script, ct);
@@ -210,18 +225,40 @@ if ($v.Enabled -ne $true) { throw 'verify failed' }
         try
         {
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(backupJson) ? "[]" : backupJson);
-            var prior = PowerShellJson.Enumerate(doc.RootElement)
-                .FirstOrDefault(el => (PowerShellJson.GetString(el, "RuleId") ?? PowerShellJson.GetString(el, "Name") ?? "")
-                    .Contains("FPS-ICMP4-ERQ-In", StringComparison.OrdinalIgnoreCase)
-                    || (PowerShellJson.GetString(el, "DisplayName") ?? "").Contains("Echo", StringComparison.OrdinalIgnoreCase));
-            var wasEnabled = prior.ValueKind != JsonValueKind.Undefined
-                             && prior.TryGetProperty("Enabled", out var en)
-                             && PowerShellJson.IsTruthy(en);
-            var script = wasEnabled
-                ? "Enable-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In'; 'OK'"
-                : "Disable-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In'; 'OK'";
+            var priorEl = PowerShellJson.Enumerate(doc.RootElement)
+                .Select(ParseRule)
+                .FirstOrDefault(r => (r.RuleId ?? r.Name ?? "").Contains("FPS-ICMP4-ERQ-In", StringComparison.OrdinalIgnoreCase)
+                                     || (r.DisplayName ?? "").Contains("Echo", StringComparison.OrdinalIgnoreCase));
+            if (priorEl is null)
+                return false;
+
+            var id = Escape(priorEl.RuleId ?? "FPS-ICMP4-ERQ-In");
+            var profile = Escape(string.IsNullOrWhiteSpace(priorEl.Profiles) ? "Private" : priorEl.Profiles!);
+            var remote = Escape(string.IsNullOrWhiteSpace(priorEl.RemoteAddresses) ? "Any" : priorEl.RemoteAddresses!);
+            var enable = priorEl.Enabled ? "Enable-NetFirewallRule" : "Disable-NetFirewallRule";
+            var script = $@"
+$ErrorActionPreference = 'Stop'
+Set-NetFirewallRule -Name '{id}' -Profile {QuoteProfile(profile)} -ErrorAction Stop
+Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name '{id}' -ErrorAction Stop) -RemoteAddress {QuoteRemote(remote)} -ErrorAction Stop
+{enable} -Name '{id}' -ErrorAction Stop
+'OK'
+";
             var raw = await Run(script, ct);
-            return raw?.Contains("OK", StringComparison.Ordinal) == true;
+            if (raw?.Contains("OK", StringComparison.Ordinal) != true)
+                return false;
+
+            // Must re-read and match — do not trust OK alone
+            var after = await GetRelevantRulesAsync(ct);
+            var cur = after.FirstOrDefault(r => (r.RuleId ?? "").Contains("FPS-ICMP4-ERQ-In", StringComparison.OrdinalIgnoreCase));
+            if (cur is null) return false;
+            if (cur.Enabled != priorEl.Enabled) return false;
+            if (!string.IsNullOrWhiteSpace(priorEl.Profiles) &&
+                !string.Equals(NormalizeProfile(cur.Profiles), NormalizeProfile(priorEl.Profiles), StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (!string.IsNullOrWhiteSpace(priorEl.RemoteAddresses) &&
+                !string.Equals((cur.RemoteAddresses ?? "").Trim(), priorEl.RemoteAddresses.Trim(), StringComparison.OrdinalIgnoreCase))
+                return false;
+            return true;
         }
         catch
         {
@@ -231,36 +268,84 @@ if ($v.Enabled -ne $true) { throw 'verify failed' }
 
     public async Task<bool> EnableFileAndPrinterSharingAsync(CancellationToken ct = default)
     {
-        // Language-independent group resource id for File and Printer Sharing
+        // NEVER Enable-NetFirewallRule -Group (would enable Public/Domain members).
+        // Enable only approved inbound FPS rules by name after setting Private + LocalSubnet.
         const string script = @"
-Enable-NetFirewallRule -Group '@FirewallAPI.dll,-28502' -ErrorAction SilentlyContinue
-Get-NetFirewallRule -Group '@FirewallAPI.dll,-28502' -ErrorAction SilentlyContinue | Where-Object { $_.Direction -eq 'Inbound' -and $_.Profile -match 'Private|Any' } | Enable-NetFirewallRule -ErrorAction SilentlyContinue
-$enabled = @(Get-NetFirewallRule -Group '@FirewallAPI.dll,-28502' -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq $true -and $_.Direction -eq 'Inbound' }).Count
-if ($enabled -lt 1) { throw 'no rules enabled' }
-'OK'
+$ErrorActionPreference = 'Stop'
+$approved = @(
+  'FPS-SMB-In-TCP',
+  'FPS-SMB-In-TCP-NoScope',
+  'FPS-NBSession-In-TCP',
+  'FPS-NBSession-In-TCP-NoScope',
+  'FPS-RPCSS-In-TCP',
+  'FPS-SpoolSvc-In-TCP',
+  'FPS-SpoolSvc-In-TCP-NoScope'
+)
+$changed = 0
+foreach ($name in $approved) {
+  $r = Get-NetFirewallRule -Name $name -PolicyStore ActiveStore -ErrorAction SilentlyContinue
+  if (-not $r) { continue }
+  if ($r.PolicyStore -match 'GP|GroupPolicy') { continue }
+  if ([string]$r.Direction -notmatch 'Inbound|In') { continue }
+  Set-NetFirewallRule -Name $name -Profile Private -Direction Inbound -Action Allow -ErrorAction Stop
+  try { Set-NetFirewallAddressFilter -AssociatedNetFirewallRule $r -RemoteAddress LocalSubnet -ErrorAction Stop } catch { }
+  Enable-NetFirewallRule -Name $name -ErrorAction Stop
+  $v = Get-NetFirewallRule -Name $name -ErrorAction Stop
+  if (($v.Enabled -eq $true -or $v.Enabled -eq 'True') -and ([string]$v.Profile -match 'Private') -and ([string]$v.Profile -notmatch 'Public')) { $changed++ }
+}
+if ($changed -lt 1) { throw 'NO_SCOPED_FPS_RULE_ENABLED' }
+'OK:' + $changed
 ";
         var raw = await Run(script, ct);
-        return raw?.Contains("OK", StringComparison.Ordinal) == true;
+        return raw?.Contains("OK:", StringComparison.Ordinal) == true;
     }
 
     public async Task<bool> RestoreFileAndPrinterSharingFromBackupAsync(string backupJson, CancellationToken ct = default)
     {
-        // Best-effort: re-apply Enabled flags from backup for FPS-* rules only
         try
         {
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(backupJson) ? "[]" : backupJson);
-            foreach (var el in PowerShellJson.Enumerate(doc.RootElement))
+            var priors = PowerShellJson.Enumerate(doc.RootElement).Select(ParseRule)
+                .Where(r =>
+                {
+                    var id = r.RuleId ?? r.Name ?? "";
+                    return id.StartsWith("FPS-", StringComparison.OrdinalIgnoreCase)
+                           || (r.Grouping?.Contains("FirewallAPI.dll,-28502") ?? false);
+                }).ToList();
+            if (priors.Count == 0) return false;
+
+            foreach (var prior in priors)
             {
-                var id = PowerShellJson.GetString(el, "RuleId") ?? PowerShellJson.GetString(el, "Name");
+                var id = Escape(prior.RuleId ?? prior.Name);
                 if (string.IsNullOrWhiteSpace(id)) continue;
-                if (!id.StartsWith("FPS-", StringComparison.OrdinalIgnoreCase)
-                    && !(PowerShellJson.GetString(el, "Grouping")?.Contains("FirewallAPI.dll,-28502") ?? false))
-                    continue;
-                var enabled = el.TryGetProperty("Enabled", out var en) && PowerShellJson.IsTruthy(en);
-                var script = enabled
-                    ? $"Enable-NetFirewallRule -Name '{Escape(id)}'; 'OK'"
-                    : $"Disable-NetFirewallRule -Name '{Escape(id)}'; 'OK'";
-                await Run(script, ct);
+                if (FirewallRuleScope.IsGpoManaged(prior)) continue;
+                var profile = string.IsNullOrWhiteSpace(prior.Profiles) ? "Any" : prior.Profiles!;
+                var remote = string.IsNullOrWhiteSpace(prior.RemoteAddresses) ? "Any" : prior.RemoteAddresses!;
+                var enable = prior.Enabled ? "Enable-NetFirewallRule" : "Disable-NetFirewallRule";
+                var script = $@"
+$ErrorActionPreference = 'Stop'
+$r = Get-NetFirewallRule -Name '{id}' -ErrorAction Stop
+if ($r.PolicyStore -match 'GP|GroupPolicy') {{ throw 'GPO' }}
+Set-NetFirewallRule -Name '{id}' -Profile {QuoteProfile(Escape(profile))} -ErrorAction Stop
+try {{ Set-NetFirewallAddressFilter -AssociatedNetFirewallRule $r -RemoteAddress {QuoteRemote(Escape(remote))} -ErrorAction Stop }} catch {{}}
+{enable} -Name '{id}' -ErrorAction Stop
+'OK'
+";
+                var raw = await Run(script, ct);
+                if (raw?.Contains("OK", StringComparison.Ordinal) != true)
+                    return false;
+            }
+
+            var after = await GetRelevantRulesAsync(ct);
+            foreach (var prior in priors)
+            {
+                var id = prior.RuleId ?? prior.Name;
+                var cur = after.FirstOrDefault(r => string.Equals(r.RuleId ?? r.Name, id, StringComparison.OrdinalIgnoreCase));
+                if (cur is null || cur.Enabled != prior.Enabled)
+                    return false;
+                if (!string.IsNullOrWhiteSpace(prior.Profiles) &&
+                    !string.Equals(NormalizeProfile(cur.Profiles), NormalizeProfile(prior.Profiles), StringComparison.OrdinalIgnoreCase))
+                    return false;
             }
             return true;
         }
@@ -278,6 +363,9 @@ if ($enabled -lt 1) { throw 'no rules enabled' }
     }
 
     private static string Escape(string value) => value.Replace("'", "''");
+    private static string QuoteProfile(string p) => p.Contains(',') ? $"'{p}'" : p;
+    private static string QuoteRemote(string r) => $"'{r}'";
+    private static string NormalizeProfile(string? p) => (p ?? "").Replace(" ", "", StringComparison.Ordinal);
 }
 
 public sealed class PowerShellNetworkProfileService : INetworkProfileService
@@ -340,10 +428,20 @@ public sealed class PowerShellSmbInspector : ISmbInspector
 
     public async Task<SmbConfiguration> GetConfigurationAsync(CancellationToken ct = default)
     {
-        const string script = "Get-SmbServerConfiguration | Select-Object EnableSMB1Protocol,RequireSecuritySignature,EnableInsecureGuestLogons | ConvertTo-Json -Compress";
+        // EnableInsecureGuestLogons is an SMB *client* setting — do not read from server config alone.
+        const string script = @"
+$srv = Get-SmbServerConfiguration -ErrorAction Stop | Select-Object EnableSMB1Protocol,RequireSecuritySignature
+$cli = Get-SmbClientConfiguration -ErrorAction Stop | Select-Object EnableInsecureGuestLogons,RequireSecuritySignature
+[pscustomobject]@{
+  EnableSMB1Protocol = $srv.EnableSMB1Protocol
+  RequireSecuritySignature = $srv.RequireSecuritySignature
+  EnableInsecureGuestLogons = $cli.EnableInsecureGuestLogons
+  ClientRequireSecuritySignature = $cli.RequireSecuritySignature
+} | ConvertTo-Json -Compress
+";
         var result = await _runner.RunAsync("powershell.exe", new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script }, TimeSpan.FromSeconds(30), ct);
         if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.StdOut))
-            return new SmbConfiguration { Notes = "Unable to read SMB configuration", CollectionStatus = ProbeOutcome.Unknown };
+            return new SmbConfiguration { Notes = "Unable to read SMB server+client configuration", CollectionStatus = ProbeOutcome.Unknown };
         try
         {
             using var doc = JsonDocument.Parse(result.StdOut);
@@ -353,7 +451,8 @@ public sealed class PowerShellSmbInspector : ISmbInspector
                 EnableSMB1Protocol = el.TryGetProperty("EnableSMB1Protocol", out var s1) ? PowerShellJson.IsTruthy(s1) : null,
                 RequireSecuritySignature = el.TryGetProperty("RequireSecuritySignature", out var sig) ? PowerShellJson.IsTruthy(sig) : null,
                 EnableInsecureGuestLogons = el.TryGetProperty("EnableInsecureGuestLogons", out var g) ? PowerShellJson.IsTruthy(g) : null,
-                CollectionStatus = ProbeOutcome.Pass
+                CollectionStatus = ProbeOutcome.Pass,
+                Notes = "Guest logons from Get-SmbClientConfiguration; SMB1/signing from Get-SmbServerConfiguration"
             };
         }
         catch

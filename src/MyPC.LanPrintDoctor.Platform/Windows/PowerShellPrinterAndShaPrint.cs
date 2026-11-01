@@ -137,9 +137,27 @@ public sealed class WindowsShaPrintInspector : IShaPrintInspector
 
     private async Task<(IReadOnlyList<string> Endpoints, ProbeOutcome Status)> CollectListeningAsync(CancellationToken ct)
     {
+        // Only count listeners whose owning process is ShaPrint / matching install PID.
         var script = $@"
-$tcp = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {{ $_.LocalPort -in {ShaPrintPorts.ServerTcp},{ShaPrintPorts.ClientLoopbackTcp} }} | ForEach-Object {{ 'TCP:' + $_.LocalAddress + ':' + $_.LocalPort }}
-$udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Where-Object {{ $_.LocalPort -eq {ShaPrintPorts.DiscoveryUdp} }} | ForEach-Object {{ 'UDP:' + $_.LocalAddress + ':' + $_.LocalPort }}
+$ErrorActionPreference = 'Stop'
+$sha = Get-Process -Name 'ShaPrint*','PrintBridge*' -ErrorAction SilentlyContinue
+$shaPids = @($sha | Select-Object -ExpandProperty Id)
+$tcp = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+  Where-Object {{ $_.LocalPort -in {ShaPrintPorts.ServerTcp},{ShaPrintPorts.ClientLoopbackTcp} }} |
+  ForEach-Object {{
+    $own = $_.OwningProcess
+    if ($shaPids -contains $own) {{ 'TCP:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
+    else {{ 'FOREIGN:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
+  }}
+$udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue |
+  Where-Object {{ $_.LocalPort -eq {ShaPrintPorts.DiscoveryUdp} }} |
+  ForEach-Object {{
+    $own = $_.OwningProcess
+    if ($shaPids -contains $own -or $shaPids.Count -eq 0) {{
+      if ($shaPids -contains $own) {{ 'UDP:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
+      else {{ 'FOREIGNUDP:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
+    }} else {{ 'FOREIGNUDP:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
+  }}
 @($tcp + $udp) | ConvertTo-Json -Compress
 ";
         var result = await _runner.RunAsync("powershell.exe", new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script }, TimeSpan.FromSeconds(30), ct);
@@ -151,16 +169,19 @@ $udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Where-Object {{ $_.Loc
         try
         {
             using var doc = JsonDocument.Parse(result.StdOut);
-            var list = PowerShellJson.Enumerate(doc.RootElement)
+            var all = PowerShellJson.Enumerate(doc.RootElement)
                 .Select(e => e.ValueKind == JsonValueKind.String ? e.GetString() ?? "" : e.ToString())
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .ToList();
-            return (list, ProbeOutcome.Pass);
+            // Ports owned by other processes are NOT ShaPrint listeners
+            var owned = all.Where(s => !s.StartsWith("FOREIGN", StringComparison.OrdinalIgnoreCase)).ToList();
+            return (owned, ProbeOutcome.Pass);
         }
         catch
         {
-            // single string without array
             var line = result.StdOut.Trim().Trim('"');
+            if (line.StartsWith("FOREIGN", StringComparison.OrdinalIgnoreCase))
+                return (Array.Empty<string>(), ProbeOutcome.Pass);
             if (!string.IsNullOrWhiteSpace(line))
                 return (new[] { line }, ProbeOutcome.Pass);
             return (Array.Empty<string>(), ProbeOutcome.Unknown);

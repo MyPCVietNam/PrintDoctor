@@ -49,28 +49,62 @@ public sealed class DecisionEngine
         var tcpToTarget = string.IsNullOrWhiteSpace(target)
             ? Array.Empty<ConnectivityProbeResult>()
             : tcp.Where(p => string.Equals(p.Target, target, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var icmpFail = icmpToTarget.Length > 0 && icmpToTarget.All(p => !p.Success);
-        var icmpPass = icmpToTarget.Any(p => p.Success);
-        var tcpPass = tcpToTarget.Any(p => p.Success);
-        var tcpFail = tcpToTarget.Length > 0 && tcpToTarget.All(p => !p.Success);
+
+        // Only Pass/Fail are decisive. Unknown/NotTested/NotApplicable must NOT become Fail.
+        static bool IsDecisive(ConnectivityProbeResult p)
+            => p.Outcome is ProbeOutcome.Pass or ProbeOutcome.Fail;
+        static bool IsFail(ConnectivityProbeResult p) => p.Outcome == ProbeOutcome.Fail;
+        static bool IsPass(ConnectivityProbeResult p) => p.Outcome == ProbeOutcome.Pass;
+
+        var icmpDecisive = icmpToTarget.Where(IsDecisive).ToArray();
+        var tcpDecisive = tcpToTarget.Where(IsDecisive).ToArray();
+        var icmpFail = icmpDecisive.Length > 0 && icmpDecisive.All(IsFail);
+        var icmpPass = icmpDecisive.Any(IsPass);
+        var tcpPass = tcpDecisive.Any(IsPass);
+        var tcpFail = tcpDecisive.Length > 0 && tcpDecisive.All(IsFail);
+        var icmpUnknownOnly = icmpToTarget.Length > 0 && icmpDecisive.Length == 0;
+        var tcpUnknownOnly = tcpToTarget.Length > 0 && tcpDecisive.Length == 0;
 
         if (!string.IsNullOrWhiteSpace(target))
         {
-            if (icmpFail && tcpPass)
+            if (icmpUnknownOnly || (icmpToTarget.Length > 0 && !icmpFail && !icmpPass && tcpFail))
             {
                 findings.Add(new Finding
                 {
+                    Id = "LAN-001U",
+                    Title = "Insufficient ICMP evidence (Unknown/NotTested)",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = $"ICMP outcomes to {target}: {string.Join(",", icmpToTarget.Select(p => p.Outcome))}; TCP decisiveFail={tcpFail}",
+                    Confidence = 0.55,
+                    Category = "Network",
+                    PossibleCauses = new[] { "Probe cancelled", "Insufficient rights", "Collector error" },
+                    RecommendedActions = new[] { "Re-run probes", "Do not conclude host unreachable" },
+                    RepairOwner = RepairOwnerRole.None,
+                    VerificationMethod = "Decisive ICMP Pass/Fail required"
+                });
+            }
+
+            if (icmpFail && tcpPass)
+            {
+                // Inbound ICMP on the *target* — client must not self-repair local firewall for a server issue.
+                var serverSide = snap.Role == MachineRole.Client;
+                findings.Add(new Finding
+                {
                     Id = "LAN-002",
-                    Title = "ICMP blocked suspected",
+                    Title = serverSide ? "ICMP blocked suspected on SERVER (SERVER_ACTION_REQUIRED)" : "ICMP blocked suspected (local)",
                     Severity = Severity.Medium,
                     Status = DiagnosticStatus.Warning,
-                    Evidence = $"ICMP to {target} failed while at least one TCP probe succeeded: {string.Join(", ", tcpToTarget.Where(t => t.Success).Select(t => t.Port?.ToString() ?? "?"))}",
+                    Evidence = $"ICMP to {target} failed while at least one TCP probe succeeded: {string.Join(", ", tcpDecisive.Where(IsPass).Select(t => t.Port?.ToString() ?? "?"))}",
                     Confidence = 0.8,
                     Category = "Network",
-                    PossibleCauses = new[] { "Windows Firewall ICMP Echo rule disabled", "Third-party firewall ICMP filter", "Router ICMP filter" },
-                    RecommendedActions = new[] { "Inspect ICMP Echo Request inbound rules on target", "Do not treat host as offline" },
-                    RepairId = "FW-ICMP-ECHO",
-                    VerificationMethod = "Re-run ICMP + TCP probes"
+                    PossibleCauses = new[] { "Windows Firewall ICMP Echo rule disabled on target", "Third-party firewall ICMP filter", "Router ICMP filter" },
+                    RecommendedActions = serverSide
+                        ? new[] { "SERVER_ACTION_REQUIRED: run PrintDoctor as Server on the target host", "Do not modify this client firewall for server inbound ICMP" }
+                        : new[] { "Inspect local ICMP Echo Request inbound rules", "Do not treat host as offline" },
+                    RepairId = serverSide ? null : "FW-ICMP-ECHO",
+                    RepairOwner = serverSide ? RepairOwnerRole.ServerActionRequired : RepairOwnerRole.LocalServer,
+                    VerificationMethod = "Re-run ICMP + TCP probes on owning machine"
                 });
             }
             else if (icmpFail && tcpFail)
@@ -81,7 +115,7 @@ public sealed class DecisionEngine
                     Title = "Server unreachable (ICMP and TCP failed)",
                     Severity = Severity.Critical,
                     Status = DiagnosticStatus.Fail,
-                    Evidence = $"ICMP and TCP probes to {target} all failed. Not sufficient alone to blame firewall.",
+                    Evidence = $"Decisive ICMP and TCP probes to {target} all Fail. Unknown/NotTested ignored.",
                     Confidence = 0.7,
                     Category = "Network",
                     PossibleCauses = new[]
@@ -100,7 +134,25 @@ public sealed class DecisionEngine
                         "Verify listeners on server",
                         "Inspect switch/router if both ends look healthy"
                     },
+                    RepairOwner = RepairOwnerRole.None,
                     VerificationMethod = "Server+client correlation report"
+                });
+            }
+            else if (icmpFail && tcpUnknownOnly)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "LAN-001P",
+                    Title = "ICMP Fail but TCP not decisive — insufficient for unreachable",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = $"ICMP Fail to {target}; TCP outcomes: {string.Join(",", tcpToTarget.Select(p => p.Outcome))}",
+                    Confidence = 0.5,
+                    Category = "Network",
+                    PossibleCauses = new[] { "TCP not tested", "Partial collector failure" },
+                    RecommendedActions = new[] { "Complete TCP probes before concluding LAN-001" },
+                    RepairOwner = RepairOwnerRole.None,
+                    VerificationMethod = "Decisive TCP Pass/Fail"
                 });
             }
 
@@ -235,6 +287,7 @@ public sealed class DecisionEngine
                         PossibleCauses = new[] { "Network reclassified after reconnect", "User/policy change" },
                         RecommendedActions = new[] { "Confirm trusted LAN", "Offer Private profile change only with user consent" },
                         RepairId = "NET-PROFILE-PRIVATE",
+                        RepairOwner = RepairOwnerRole.LocalAny,
                         VerificationMethod = "Re-read NetworkCategory + sharing rules"
                     });
                 }
@@ -290,9 +343,12 @@ public sealed class DecisionEngine
                 Confidence = 0.75,
                 Category = "Firewall",
                 PossibleCauses = new[] { "Manual disable", "Profile mismatch", "Security software" },
-                RecommendedActions = new[] { "Enable scoped ICMP/File and Printer Sharing rules for Private/LocalSubnet" },
-                RepairId = "FW-ICMP-ECHO",
-                VerificationMethod = "Rule dump + ICMP probe"
+                RecommendedActions = snap.Role == MachineRole.Client
+                    ? new[] { "SERVER_ACTION_REQUIRED if rules are on the print server", "Do not widen client Public profile rules" }
+                    : new[] { "Enable scoped ICMP Echo for Private/LocalSubnet only" },
+                RepairId = snap.Role == MachineRole.Server ? "FW-ICMP-ECHO" : null,
+                RepairOwner = snap.Role == MachineRole.Server ? RepairOwnerRole.LocalServer : RepairOwnerRole.ServerActionRequired,
+                VerificationMethod = "Rule dump + ICMP probe on owning machine"
             });
         }
     }
@@ -514,6 +570,7 @@ public sealed class DecisionEngine
                     PossibleCauses = new[] { "Public profile", "Manual toggle" },
                     RecommendedActions = new[] { "Enable for Private profile only when LAN is trusted" },
                     RepairId = "FW-FILE-PRINT-SHARE",
+                    RepairOwner = RepairOwnerRole.LocalAny,
                     VerificationMethod = "Sharing toggles + browse"
                 });
             }
