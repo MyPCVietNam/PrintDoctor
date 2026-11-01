@@ -122,10 +122,10 @@ public class Hf2WindowsPowerShellFixtureTests
         }
 
         // Read-only: never Set-/Enable-NetFirewall* in CI.
-        Assert.DoesNotContain(
-            Environment.GetEnvironmentVariable("LPD_ALLOW_FIREWALL_MUTATION") ?? "",
-            "FORCE_MUTATE_IN_CI",
-            StringComparison.Ordinal);
+        var mutateFlag = Environment.GetEnvironmentVariable("LPD_ALLOW_FIREWALL_MUTATION");
+        Assert.True(
+            string.IsNullOrEmpty(mutateFlag) || mutateFlag is "0" or "false",
+            "CI must not set LPD_ALLOW_FIREWALL_MUTATION for live firewall writes");
         // Presence of NetSecurity module is enough evidence the runner can host future lab fixtures.
         var runner = new ProcessRunner();
         var probe = await runner.RunAsync(
