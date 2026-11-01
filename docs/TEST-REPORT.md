@@ -1,20 +1,27 @@
 # TEST-REPORT
 
+See also `TEST-REPORT-P11.md` for the P1.1 gate table.
+
 ## Local (Cloud Linux agent)
 
-- Unit: 35 passed
+- Unit: 59 passed (includes P1.1 regression suite)
 - Integration (safe): 4 passed
 - Scenarios covered in DecisionEngineScenarioTests: 1–25 (mocked/fake adapters)
-- Commit recorded at packaging time
 
 ## Windows CI
 
 Populated by `.github/workflows/windows-build.yml` artifact `TEST-SUMMARY.md`.
 
-## Explicit non-claims
+## Explicit non-claims / blocked gates
 
-This report does **not** claim:
+| Gate | Status |
+|------|--------|
+| UNIT_PASS | PASS |
+| INTEGRATION_PASS | PASS |
+| WINDOWS_CI_PASS | See latest Actions run on branch |
+| WIN10_LAB_NOT_RUN | NOT_RUN / BLOCKED |
+| WIN11_LAB_NOT_RUN | NOT_RUN / BLOCKED |
+| PHYSICAL_LAN_NOT_RUN | NOT_RUN / BLOCKED |
+| PHYSICAL_PRINT_NOT_RUN | NOT_RUN / BLOCKED |
 
-- Verified on physical Windows 10/11 office PCs
-- Verified against a physical printer
-- Verified ShaPrint 3.4.4 in a live multi-day outage reproduction
+This report does **not** claim FIELD READY or PRODUCTION READY.

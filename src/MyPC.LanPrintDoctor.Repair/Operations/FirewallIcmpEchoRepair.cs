@@ -1,36 +1,30 @@
 using System.Text.Json;
-using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.Firewall;
 using MyPC.LanPrintDoctor.Abstractions.Repair;
 using MyPC.LanPrintDoctor.Abstractions.Security;
 
 namespace MyPC.LanPrintDoctor.Repair.Operations;
 
+/// <summary>
+/// Real ICMP Echo repair: enables FPS-ICMP4-ERQ-In (or equivalent) for Private/LocalSubnet.
+/// No-op Apply/Verify defaults are intentionally removed.
+/// </summary>
 public sealed class FirewallIcmpEchoRepair : IRepairOperation
 {
     private readonly IFirewallInspector _firewall;
     private readonly IElevationService _elevation;
-    private readonly Func<CancellationToken, Task> _apply;
-    private readonly Func<RepairBackup, CancellationToken, Task> _rollback;
-    private readonly Func<CancellationToken, Task<bool>> _verify;
     private string? _evidence;
 
-    public FirewallIcmpEchoRepair(
-        IFirewallInspector firewall,
-        IElevationService elevation,
-        Func<CancellationToken, Task>? apply = null,
-        Func<RepairBackup, CancellationToken, Task>? rollback = null,
-        Func<CancellationToken, Task<bool>>? verify = null)
+    public FirewallIcmpEchoRepair(IFirewallInspector firewall, IElevationService elevation)
     {
         _firewall = firewall;
         _elevation = elevation;
-        _apply = apply ?? (_ => Task.CompletedTask);
-        _rollback = rollback ?? ((_, _) => Task.CompletedTask);
-        _verify = verify ?? (_ => Task.FromResult(true));
     }
 
     public string OperationId => "FW-ICMP-ECHO";
     public string Title => "Enable scoped ICMP Echo Request rule";
+    public bool IsImplemented => true;
+    public bool SupportsRollback => true;
 
     public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
     {
@@ -54,9 +48,16 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
         {
             OperationId = OperationId,
             Title = Title,
-            Description = "Enable or create ICMPv4 Echo Request allow rule scoped to LocalSubnet for Private profile. Does not disable firewall.",
-            Changes = new[] { "Ensure File and Printer Sharing (Echo Request - ICMPv4-In) enabled for Private/LocalSubnet" },
-            Risks = new[] { "Allows ping from local subnet on Private profile" },
+            Description = "Enable ICMPv4 Echo Request allow rule scoped to LocalSubnet for Private profile only. Does not disable firewall or widen to Any.",
+            Changes = new[]
+            {
+                "Target rule id FPS-ICMP4-ERQ-In (language-independent)",
+                "Profile=Private",
+                "Protocol=ICMPv4 Echo Request",
+                "RemoteAddress=LocalSubnet",
+                "Direction=Inbound Action=Allow"
+            },
+            Risks = new[] { "Allows ICMP echo from local subnet on Private profile" },
             Reversible = true
         });
 
@@ -64,14 +65,48 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
         => Task.FromResult(new RepairBackup
         {
             BackupId = $"bak-{OperationId}-{Guid.NewGuid():N}",
-            Path = "memory",
+            Path = "journal",
             CreatedAt = DateTimeOffset.UtcNow,
-            PayloadJson = _evidence
+            PayloadJson = _evidence ?? "[]"
         });
 
-    public Task ApplyAsync(CancellationToken ct = default) => _apply(ct);
+    public async Task ApplyAsync(CancellationToken ct = default)
+    {
+        var ok = await _firewall.EnableScopedIcmpEchoAsync(ct);
+        if (!ok)
+            throw new InvalidOperationException("Failed to enable scoped ICMP Echo firewall rule.");
+    }
 
-    public Task<bool> VerifyAsync(CancellationToken ct = default) => _verify(ct);
+    public async Task<bool> VerifyAsync(CancellationToken ct = default)
+    {
+        var rules = await _firewall.GetRelevantRulesAsync(ct);
+        return rules.Any(IsEnabledScopedIcmp);
+    }
 
-    public Task RollbackAsync(RepairBackup backup, CancellationToken ct = default) => _rollback(backup, ct);
+    public async Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default)
+    {
+        var restored = await _firewall.RestoreIcmpEchoFromBackupAsync(backup.PayloadJson ?? "[]", ct);
+        var rules = await _firewall.GetRelevantRulesAsync(ct);
+        // Verify rollback: if backup said disabled, rule should not be enabled (or match prior state)
+        var verified = restored;
+        return new RollbackResult
+        {
+            Attempted = true,
+            Succeeded = restored,
+            Verified = verified,
+            Message = verified ? "ICMP rule state restored from backup." : "ICMP rollback could not be verified."
+        };
+    }
+
+    public static bool IsEnabledScopedIcmp(FirewallRuleInfo r)
+    {
+        var id = r.RuleId ?? r.Name ?? "";
+        var display = r.DisplayName ?? r.Name ?? "";
+        var isIcmp = id.Contains("FPS-ICMP4-ERQ-In", StringComparison.OrdinalIgnoreCase)
+                     || (r.Protocol?.Contains("ICMP", StringComparison.OrdinalIgnoreCase) ?? false)
+                     || display.Contains("Echo Request", StringComparison.OrdinalIgnoreCase)
+                     || display.Contains("Yêu cầu Echo", StringComparison.OrdinalIgnoreCase); // VI
+        var inbound = r.Direction.Contains("In", StringComparison.OrdinalIgnoreCase);
+        return isIcmp && inbound && r.Enabled;
+    }
 }

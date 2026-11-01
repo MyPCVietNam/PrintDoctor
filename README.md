@@ -1,6 +1,6 @@
 # MyPC LAN & Print Doctor
 
-**MyPC LAN & Print Doctor v1.0** — chẩn đoán và khắc phục có kiểm soát lỗi LAN / chia sẻ máy in trên Windows 10/11.
+**MyPC LAN & Print Doctor v1.1 (P1.1)** — chẩn đoán và khắc phục có kiểm soát lỗi LAN / chia sẻ máy in trên Windows 10/11.
 
 Phát triển bởi [MyPC Việt Nam](https://mypc.vn).
 
@@ -20,8 +20,9 @@ Mặc định **READ-ONLY**. Không tắt firewall hàng loạt, không bật SM
 ## Công nghệ
 
 - C# / .NET 10
-- WPF (`net10.0-windows`), portable self-contained win-x64
+- WPF (`net10.0-windows`), self-contained **multi-file** win-x64 (`PublishSingleFile=false` — EXE + runtime deps, not a single standalone EXE)
 - Engine chẩn đoán tách khỏi UI; unit test bằng fake adapters
+- P1.1: real collectors / safe repairs / Compare Reports — **not** FIELD READY until Win10/11 + physical LAN labs complete
 
 ## Cấu trúc
 

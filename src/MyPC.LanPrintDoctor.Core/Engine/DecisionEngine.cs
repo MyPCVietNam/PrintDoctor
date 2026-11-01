@@ -400,7 +400,7 @@ public sealed class DecisionEngine
 
         if (snap.SmbProbe is { } probe)
         {
-            if (!probe.Tcp445Open)
+            if (probe.Tcp445 == ProbeOutcome.Fail)
             {
                 findings.Add(new Finding
                 {
@@ -416,7 +416,39 @@ public sealed class DecisionEngine
                     VerificationMethod = "TCP 445 + service + firewall"
                 });
             }
-            else if (probe.Tcp445Open && !probe.UncReachable)
+            else if (probe.Tcp445 == ProbeOutcome.Pass && probe.Unc == ProbeOutcome.NotTested)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-004A",
+                    Title = "TCP 445 open; UNC not tested",
+                    Severity = Severity.Low,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = probe.Detail ?? "UNC=NotTested",
+                    Confidence = 0.9,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Collector skipped UNC probe" },
+                    RecommendedActions = new[] { "Do not treat as SMB failure", "Re-run with UNC probe enabled" },
+                    VerificationMethod = "UNC ProbeOutcome"
+                });
+            }
+            else if (probe.Tcp445 == ProbeOutcome.Pass && probe.Unc == ProbeOutcome.AuthDenied)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-004B",
+                    Title = "TCP 445 open; UNC authentication denied",
+                    Severity = Severity.High,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = probe.Detail ?? "UNC=AuthDenied",
+                    Confidence = 0.85,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Credentials", "Share permissions", "Guest blocked" },
+                    RecommendedActions = new[] { "Use proper account", "Do not enable insecure guest or disable SMB signing" },
+                    VerificationMethod = "Authenticated share list"
+                });
+            }
+            else if (probe.Tcp445 == ProbeOutcome.Pass && probe.Unc == ProbeOutcome.Fail)
             {
                 findings.Add(new Finding
                 {
@@ -427,16 +459,48 @@ public sealed class DecisionEngine
                     Evidence = probe.Detail ?? "UNC probe failed",
                     Confidence = 0.7,
                     Category = "SMB",
-                    PossibleCauses = new[] { "Authentication", "Share permissions", "Name resolution", "SMB signing/policy" },
-                    RecommendedActions = new[] { "Check event logs for auth failures", "Do not disable SMB signing" },
+                    PossibleCauses = new[] { "Share permissions", "Name resolution", "SMB policy" },
+                    RecommendedActions = new[] { "Check event logs", "Do not disable SMB signing" },
                     VerificationMethod = "Authenticated share list"
+                });
+            }
+            else if (probe.Tcp445 == ProbeOutcome.Pass && probe.Unc == ProbeOutcome.Unknown)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-004C",
+                    Title = "TCP 445 open; UNC result UNKNOWN",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = probe.Detail ?? "UNC=Unknown",
+                    Confidence = 0.6,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Insufficient rights", "Ambiguous error" },
+                    RecommendedActions = new[] { "Re-run elevated", "Inspect collector detail" },
+                    VerificationMethod = "UNC ProbeOutcome"
                 });
             }
         }
 
         if (snap.SharingToggles is { } toggles)
         {
-            if (!toggles.NetworkDiscovery || !toggles.FileAndPrinterSharing)
+            if (toggles.NetworkDiscovery == ProbeOutcome.Unknown || toggles.FileAndPrinterSharing == ProbeOutcome.Unknown)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-005U",
+                    Title = "Sharing toggles UNKNOWN (collector)",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = toggles.Detail ?? "sharing toggles not collected",
+                    Confidence = 0.7,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Insufficient rights", "PowerShell failure" },
+                    RecommendedActions = new[] { "Re-run as Administrator", "Do not assume sharing is enabled" },
+                    VerificationMethod = "Get-NetFirewallRule group status"
+                });
+            }
+            else if (toggles.NetworkDiscovery == ProbeOutcome.Fail || toggles.FileAndPrinterSharing == ProbeOutcome.Fail)
             {
                 findings.Add(new Finding
                 {
@@ -444,7 +508,7 @@ public sealed class DecisionEngine
                     Title = "Network Discovery / File and Printer Sharing disabled",
                     Severity = Severity.Medium,
                     Status = DiagnosticStatus.Warning,
-                    Evidence = $"Discovery={toggles.NetworkDiscovery}, Sharing={toggles.FileAndPrinterSharing}",
+                    Evidence = $"Discovery={toggles.NetworkDiscovery}, Sharing={toggles.FileAndPrinterSharing}; {toggles.Detail}",
                     Confidence = 0.85,
                     Category = "SMB",
                     PossibleCauses = new[] { "Public profile", "Manual toggle" },
@@ -518,38 +582,76 @@ public sealed class DecisionEngine
             });
         }
 
-        if (snap.ShaPrint.ProcessRunning && snap.ShaPrint.ListeningEndpoints.Count == 0)
+        if (snap.ShaPrint.ProcessRunning)
         {
-            findings.Add(new Finding
+            if (snap.ShaPrint.ListeningCollectionStatus is ProbeOutcome.Unknown or ProbeOutcome.NotTested)
             {
-                Id = "SHA-003",
-                Title = "ShaPrint running but not listening expected ports",
-                Severity = Severity.High,
-                Status = DiagnosticStatus.Fail,
-                Evidence = "No listening endpoints observed for 48631/48632/48633",
-                Confidence = 0.8,
-                Category = "ShaPrint",
-                PossibleCauses = new[] { "Sharing not started", "Port conflict", "Failed bind" },
-                RecommendedActions = new[] { "Inspect ShaPrint logs if accessible", "Check port ownership" },
-                VerificationMethod = "netstat/Get-NetTCPConnection"
-            });
+                findings.Add(new Finding
+                {
+                    Id = "SHA-003U",
+                    Title = "ShaPrint listening endpoints UNKNOWN",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = "ListeningCollectionStatus=" + snap.ShaPrint.ListeningCollectionStatus,
+                    Confidence = 0.7,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "Collector rights", "Get-NetTCPConnection failed" },
+                    RecommendedActions = new[] { "Do not conclude not-listening", "Re-run elevated" },
+                    VerificationMethod = "Get-NetTCPConnection / Get-NetUDPEndpoint"
+                });
+            }
+            else if (snap.ShaPrint.ListeningCollectionStatus == ProbeOutcome.Pass && snap.ShaPrint.ListeningEndpoints.Count == 0)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SHA-003",
+                    Title = "ShaPrint running but not listening expected ports",
+                    Severity = Severity.High,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = "Collected listen table empty for 48631/48632/48633",
+                    Confidence = 0.8,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "Sharing not started", "Port conflict", "Failed bind" },
+                    RecommendedActions = new[] { "Inspect ShaPrint logs if accessible", "Check port ownership" },
+                    VerificationMethod = "netstat/Get-NetTCPConnection"
+                });
+            }
         }
 
-        if (snap.ShaPrintConnectivity is { ServerEndpointReachable: false } && !string.IsNullOrWhiteSpace(snap.TargetHost))
+        if (snap.ShaPrintConnectivity is { } conn && !string.IsNullOrWhiteSpace(snap.TargetHost))
         {
-            findings.Add(new Finding
+            if (conn.ServerEndpoint == ProbeOutcome.Fail)
             {
-                Id = "SHA-001",
-                Title = "ShaPrint endpoint unavailable",
-                Severity = Severity.High,
-                Status = DiagnosticStatus.Fail,
-                Evidence = snap.ShaPrintConnectivity.Detail ?? $"TCP {ShaPrintPorts.ServerTcp} unreachable",
-                Confidence = 0.75,
-                Category = "ShaPrint",
-                PossibleCauses = new[] { "Process down", "Not listening", "Port blocked", "No route" },
-                RecommendedActions = new[] { "Separate process/listen/firewall/route causes", "Avoid blaming ShaPrint without evidence" },
-                VerificationMethod = "Local listen check + remote TCP probe"
-            });
+                findings.Add(new Finding
+                {
+                    Id = "SHA-001",
+                    Title = "ShaPrint endpoint unavailable",
+                    Severity = Severity.High,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = conn.Detail ?? $"TCP {ShaPrintPorts.ServerTcp} unreachable",
+                    Confidence = 0.75,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "Process down", "Not listening", "Port blocked", "No route" },
+                    RecommendedActions = new[] { "Separate process/listen/firewall/route causes", "Avoid blaming ShaPrint without evidence" },
+                    VerificationMethod = "Local listen check + remote TCP probe"
+                });
+            }
+            else if (conn.ServerEndpoint is ProbeOutcome.NotTested or ProbeOutcome.Unknown)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SHA-001U",
+                    Title = "ShaPrint endpoint not tested / UNKNOWN",
+                    Severity = Severity.Low,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = conn.Detail ?? conn.ServerEndpoint.ToString(),
+                    Confidence = 0.8,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "No target", "Collector failure" },
+                    RecommendedActions = new[] { "Provide server IP and re-scan" },
+                    VerificationMethod = "TCP 48631 probe"
+                });
+            }
         }
     }
 

@@ -2,10 +2,14 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Input;
+using Microsoft.Win32;
 using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
+using MyPC.LanPrintDoctor.Abstractions.Repair;
 using MyPC.LanPrintDoctor.Abstractions.Validation;
+using MyPC.LanPrintDoctor.Core.Compare;
 using MyPC.LanPrintDoctor.Core.Models;
 using MyPC.LanPrintDoctor.Core.Orchestration;
 using MyPC.LanPrintDoctor.Platform.Windows;
@@ -17,8 +21,10 @@ namespace MyPC.LanPrintDoctor.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged
 {
-    private readonly ReportExporter _exporter = new();
+    private readonly ReportExporter _exporter = new() { ProcessRunner = new ProcessRunner() };
+    private readonly ReportCompareService _compare = new();
     private DiagnosticSnapshot? _lastSnapshot;
+    private RepairJournal? _lastJournal;
     private string _targetHost = "";
     private string _statusText = "";
     private string _sessionText = "";
@@ -33,11 +39,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         ShowCausesCommand = new RelayCommand(() => ShowCauses(), () => _lastSnapshot is not null);
         SafeRepairCommand = new RelayCommand(async () => await SafeRepairAsync(), () => _lastSnapshot is not null && !IsBusy);
         ExportCommand = new RelayCommand(async () => await ExportAsync(), () => _lastSnapshot is not null && !IsBusy);
-        CompareCommand = new RelayCommand(() =>
-        {
-            StatusText = Labels.CompareHint;
-            OnPropertyChanged(nameof(StatusText));
-        });
+        CompareCommand = new RelayCommand(() => CompareReports(), () => !IsBusy);
         StatusText = Labels.Ready;
         DetailHint = Labels.DetailHint;
         Subtitle = Labels.Subtitle;
@@ -134,7 +136,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Findings.Clear();
         try
         {
-            var (net, fw, svc, smb, prn, sha, _) = PlatformComposition.CreateWindowsStack();
+            var (net, fw, svc, smb, prn, sha, _, _) = PlatformComposition.CreateWindowsStack();
             var orch = new DiagnosticOrchestrator(net, fw, svc, smb, prn, sha);
             var snap = await orch.RunAsync(new DiagnosticRequest
             {
@@ -197,8 +199,21 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
 
         var pick = repairable[0];
+        var (net, fw, svc, smb, prn, sha, elev, profiles) = PlatformComposition.CreateWindowsStack();
+        _ = (net, smb, prn, sha);
+        var op = CreateRepair(pick.RepairId!, fw, svc, elev, profiles);
+
+        if (!op.IsImplemented)
+        {
+            StatusText = $"NOT_IMPLEMENTED: {op.OperationId} — repair disabled (no fake success).";
+            MessageBox.Show(StatusText, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var preview = await op.PreviewChangesAsync();
         var confirm = MessageBox.Show(
-            string.Format(Labels.ConfirmRepair, pick.RepairId, pick.Title),
+            string.Format(Labels.ConfirmRepair, pick.RepairId, pick.Title) + "\n\n" + preview.Description + "\n" + string.Join("\n", preview.Changes)
+            + (preview.Reversible ? "" : "\n\n⚠ " + Labels.Irreversible),
             Labels.SafeRepair,
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
@@ -211,39 +226,37 @@ public sealed class MainViewModel : INotifyPropertyChanged
         IsBusy = true;
         try
         {
-            var (net, fw, svc, smb, prn, sha, elev) = PlatformComposition.CreateWindowsStack();
-            _ = (net, smb, prn, sha);
-            var journalDir = Path.Combine(_exporter.DefaultRoot, "Journals", _lastSnapshot.SessionId);
-            var executor = new RepairExecutor(new RepairJournal(journalDir));
-            Abstractions.Repair.IRepairOperation op = pick.RepairId switch
+            if (!elev.IsAdministrator())
             {
-                "FW-ICMP-ECHO" => new FirewallIcmpEchoRepair(fw, elev),
-                "NET-PROFILE-PRIVATE" => new NetworkProfilePrivateRepair(elev),
-                "SVC-SPOOLER-START" => new ServiceStartRepair("Spooler", "SVC-SPOOLER-START", "Start Print Spooler", svc, elev),
-                "SVC-LANMANSERVER-START" => new ServiceStartRepair("LanmanServer", "SVC-LANMANSERVER-START", "Start LanmanServer", svc, elev),
-                "SVC-LANMANWORKSTATION-START" => new ServiceStartRepair("LanmanWorkstation", "SVC-LANMANWORKSTATION-START", "Start LanmanWorkstation", svc, elev),
-                "FW-FILE-PRINT-SHARE" => new FirewallIcmpEchoRepair(fw, elev),
-                _ => throw new InvalidOperationException("Repair not available for " + pick.RepairId)
-            };
-
-            // Preview-only apply path for FW ops until Windows script hooks attached; service start is live.
-            if (op is FirewallIcmpEchoRepair or NetworkProfilePrivateRepair)
-            {
-                var preview = await op.PreviewChangesAsync();
-                MessageBox.Show(preview.Description + "\n\n" + string.Join("\n", preview.Changes), Labels.SafeRepair);
-                if (!elev.IsAdministrator())
-                {
-                    StatusText = Labels.NeedAdmin;
-                    return;
-                }
+                StatusText = Labels.NeedAdmin;
+                return;
             }
 
+            var journalDir = Path.Combine(_exporter.DefaultRoot, "Journals", _lastSnapshot.SessionId);
+            _lastJournal = new RepairJournal(journalDir);
+            var executor = new RepairExecutor(_lastJournal);
+            var before = await op.PreviewChangesAsync();
             var result = await executor.ExecuteAsync(op, userConfirmed: true);
-            StatusText = result.Message ?? result.Status.ToString();
-            if (result.Verified)
+
+            _lastSnapshot.RepairsJson = _lastJournal.ToJson();
+            _lastSnapshot.BeforeAfterJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                before = before,
+                result,
+                rolledBackClaimedOnlyIfVerified = result.RolledBack
+            });
+
+            if (result.NotImplemented)
+                StatusText = result.Message ?? "NOT_IMPLEMENTED";
+            else if (result.Verified && result.Status == DiagnosticStatus.Pass)
+            {
+                StatusText = result.Message ?? Labels.ScanDone;
                 await ScanAsync();
-            else if (result.Status == DiagnosticStatus.Pass)
+            }
+            else if (result.Status == DiagnosticStatus.Pass && !result.Verified)
                 StatusText = Labels.UnverifiedSuccess;
+            else
+                StatusText = result.Message ?? Labels.RepairFailed;
         }
         catch (Exception ex)
         {
@@ -256,12 +269,81 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    private static IRepairOperation CreateRepair(
+        string repairId,
+        Abstractions.Firewall.IFirewallInspector fw,
+        Abstractions.Services.IWindowsServiceInspector svc,
+        Abstractions.Security.IElevationService elev,
+        Abstractions.Firewall.INetworkProfileService profiles)
+        => repairId switch
+        {
+            "FW-ICMP-ECHO" => new FirewallIcmpEchoRepair(fw, elev),
+            "FW-FILE-PRINT-SHARE" => new FilePrintShareRepair(fw, elev),
+            "NET-PROFILE-PRIVATE" => new NetworkProfilePrivateRepair(profiles, elev),
+            "SVC-SPOOLER-START" => new ServiceStartRepair("Spooler", "SVC-SPOOLER-START", "Start Print Spooler", svc, elev),
+            "SVC-LANMANSERVER-START" => new ServiceStartRepair("LanmanServer", "SVC-LANMANSERVER-START", "Start LanmanServer", svc, elev),
+            "SVC-LANMANWORKSTATION-START" => new ServiceStartRepair("LanmanWorkstation", "SVC-LANMANWORKSTATION-START", "Start LanmanWorkstation", svc, elev),
+            _ => new NotImplementedRepair(repairId, "Unknown repair")
+        };
+
+    private void CompareReports()
+    {
+        var serverDlg = new OpenFileDialog
+        {
+            Title = Labels.CompareServerFile,
+            Filter = "Report (*.zip;*.json)|*.zip;*.json|All|*.*"
+        };
+        if (serverDlg.ShowDialog() != true) return;
+
+        var clientDlg = new OpenFileDialog
+        {
+            Title = Labels.CompareClientFiles,
+            Filter = "Report (*.zip;*.json)|*.zip;*.json|All|*.*",
+            Multiselect = true
+        };
+        if (clientDlg.ShowDialog() != true || clientDlg.FileNames.Length == 0) return;
+
+        try
+        {
+            var result = _compare.CompareFiles(serverDlg.FileName, clientDlg.FileNames);
+            Findings.Clear();
+            foreach (var f in result.Findings)
+            {
+                Findings.Add(new FindingRow
+                {
+                    Status = f.Status.ToString().ToUpperInvariant(),
+                    Title = $"{f.Id} — {f.Title}",
+                    Evidence = f.Evidence
+                });
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"HasValidEvidence={result.HasValidEvidence}");
+            if (result.ServerSideIssues.Count > 0) sb.AppendLine("SERVER: " + string.Join("; ", result.ServerSideIssues));
+            if (result.ClientSpecificIssues.Count > 0) sb.AppendLine("CLIENT: " + string.Join("; ", result.ClientSpecificIssues));
+            if (result.InfrastructureHints.Count > 0) sb.AppendLine("INFRA: " + string.Join("; ", result.InfrastructureHints));
+            if (result.InsufficientEvidence.Count > 0) sb.AppendLine("INSUFFICIENT: " + string.Join("; ", result.InsufficientEvidence));
+            if (Findings.Count == 0 && !result.HasValidEvidence)
+                Findings.Add(new FindingRow { Status = "UNKNOWN", Title = "Insufficient evidence", Evidence = sb.ToString() });
+            StatusText = sb.ToString();
+            MessageBox.Show(sb.ToString(), Labels.Compare, MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = Labels.CompareFailed + ": " + ex.Message;
+            MessageBox.Show(StatusText, Labels.Compare, MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private async Task ExportAsync()
     {
         if (_lastSnapshot is null) return;
         try
         {
-            var path = await _exporter.ExportZipAsync(_lastSnapshot, redact: false);
+            var redact = MessageBox.Show(Labels.RedactPrompt, Labels.Export, MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+            if (_lastJournal is not null)
+                _lastSnapshot.RepairsJson = _lastJournal.ToJson();
+            var path = await _exporter.ExportZipAsync(_lastSnapshot, redact);
             StatusText = Labels.Exported + ": " + path;
         }
         catch (Exception ex)
@@ -313,6 +395,11 @@ public sealed class UiLabels
     public string Exported { get; init; } = "";
     public string ExportFailed { get; init; } = "";
     public string CompareHint { get; init; } = "";
+    public string CompareServerFile { get; init; } = "";
+    public string CompareClientFiles { get; init; } = "";
+    public string CompareFailed { get; init; } = "";
+    public string Irreversible { get; init; } = "";
+    public string RedactPrompt { get; init; } = "";
 
     public static UiLabels Vietnamese { get; } = new()
     {
@@ -345,7 +432,12 @@ public sealed class UiLabels
         RepairFailed = "Sửa thất bại",
         Exported = "Đã xuất",
         ExportFailed = "Xuất báo cáo thất bại",
-        CompareHint = "Nhập báo cáo server + client (Export ZIP/JSON) để so sánh trong phiên bản chi tiết. Engine CompareEngine đã sẵn trong Core."
+        CompareHint = "Chọn báo cáo server và client (ZIP/JSON) để so sánh thật.",
+        CompareServerFile = "Chọn báo cáo MÁY CHỦ",
+        CompareClientFiles = "Chọn báo cáo MÁY TRẠM (tối đa nhiều file)",
+        CompareFailed = "So sánh thất bại",
+        Irreversible = "Thao tác này không thể rollback tự động.",
+        RedactPrompt = "Ẩn IP/MAC/tên máy trong báo cáo?"
     };
 
     public static UiLabels English { get; } = new()
@@ -379,7 +471,12 @@ public sealed class UiLabels
         RepairFailed = "Repair failed",
         Exported = "Exported",
         ExportFailed = "Export failed",
-        CompareHint = "Import server + client reports to compare. CompareEngine is available in Core."
+        CompareHint = "Pick server and client report ZIP/JSON files for a real comparison.",
+        CompareServerFile = "Select SERVER report",
+        CompareClientFiles = "Select CLIENT reports (multi-select)",
+        CompareFailed = "Compare failed",
+        Irreversible = "This operation cannot be automatically rolled back.",
+        RedactPrompt = "Redact IP/MAC/machine name in the report?"
     };
 }
 
