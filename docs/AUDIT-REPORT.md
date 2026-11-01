@@ -14,7 +14,7 @@
 | `dotnet build` Release (Linux + EnableWindowsTargeting) | PASS |
 | Unit tests (35) | PASS |
 | Integration tests safe/isolated (4) | PASS |
-| Windows GitHub Actions CI | See Actions run URL after push |
+| Windows GitHub Actions CI | PASS — https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41304978177 |
 | Windows 10 22H2 lab | **NOT_RUN / BLOCKED** |
 | Windows 11 24H2/25H2/26H2 lab | **NOT_RUN / BLOCKED** |
 | Physical printer / USB / RAW 9100 print | **NOT_RUN / BLOCKED** |
