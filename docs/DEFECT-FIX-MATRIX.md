@@ -1,7 +1,21 @@
-# DEFECT-FIX-MATRIX — P1.1 + HF1 + HF2 + corrections
+# DEFECT-FIX-MATRIX — P1.1 + HF1 + HF2 + corrections + P2 RC1
 
 Baseline: PR #1 `1647875`. PR #2 branch `fix/p11-diagnostic-accuracy-safe-repair`.
-Final-two baseline HEAD: `8cf4845`.
+Final-two baseline HEAD: `8cf4845` → `0962972`.
+P2 branch: `cursor/p2-rc1-field-pilot-e81e` from `0962972`. Version **1.2.0-RC1**.
+
+## P2 Field Pilot (v1.2.0-RC1)
+
+| Defect ID | Severity | Status | File/function | After | Test | Result | Remaining risk |
+|-----------|----------|--------|---------------|-------|------|--------|----------------|
+| P2-00-A Invalid Set-AddressFilter | BLOCKER | FIXED | `PowerShellWindowsInspectors`, `NetSecurityCommandCatalog`, owned repairs | Mutations use `Set-NetFirewallRule -RemoteAddress`; catalog forbids Set+Associated | P2_00A_* + live Win binding probe | UNIT_PASS; Win binding on CI | — |
+| P2-00-B Enabled False truthy | BLOCKER | FIXED | `PowerShellJson.TryParseEnabled` | `"False"` never truthy; unknown ⇒ not enabled | P2_00B_* | UNIT_PASS | Full PS 5.1 enum matrix lab |
+| P2-00-C Durable journal | BLOCKER | FIXED | `RepairJournal.RecordMutationIntent`, WriteThrough Persist | Intent before Apply; corrupt fail-closed; UNCERTAIN on crash | P2_00C_* | UNIT_PASS | Operator resume UX |
+| P2-01 Root-cause CASE A/B/C | HIGH | FIXED | `NetworkRootCauseEngine` | Evidence-based; INFRASTRUCTURE_ACTION_REQUIRED | P2_01_* | UNIT_PASS | Physical LAN NOT_RUN |
+| P2-02 Owned firewall | HIGH | FIXED | `OwnedFirewallRuleRepair` | MyPC.PrintDoctor.* Disabled→verify→Enable; no 48632 LAN | P2_02_* | UNIT_PASS | Live Win mutation lab BLOCKED |
+| P2-UI Multi-repair pick | HIGH | FIXED | `MainViewModel.SafeRepairAsync` | User must choose; no auto-first | Manual + code review | CODE | Field UX |
+
+FIELD_VALIDATION_PENDING. WIN10/11 physical lab **NOT_RUN**. Not FIELD/PRODUCTION READY.
 
 ## Final two safety defects (v1.1.4)
 

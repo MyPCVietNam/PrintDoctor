@@ -4,7 +4,7 @@ using MyPC.LanPrintDoctor.Repair.Operations;
 
 namespace MyPC.LanPrintDoctor.Platform.Windows;
 
-internal static class PowerShellJson
+public static class PowerShellJson
 {
     public static IEnumerable<JsonElement> Enumerate(JsonElement root)
         => root.ValueKind == JsonValueKind.Array ? root.EnumerateArray() : new[] { root };
@@ -24,14 +24,54 @@ internal static class PowerShellJson
     }
 
     public static bool IsTruthy(JsonElement el)
-        => el.ValueKind switch
+        => TryParseEnabled(el, out var b) && b;
+
+    /// <summary>
+    /// Strict Enabled parsing — never treat "False"/GPOBoolean False as true.
+    /// Returns false when value cannot be interpreted (caller may treat as UNKNOWN).
+    /// </summary>
+    public static bool TryParseEnabled(JsonElement el, out bool enabled)
+    {
+        enabled = false;
+        switch (el.ValueKind)
         {
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Number => el.TryGetInt32(out var n) ? n != 0 : el.GetDouble() != 0,
-            JsonValueKind.String => el.GetString() is "True" or "true" or "1" or "Enabled" or "Bật",
-            _ => false
-        };
+            case JsonValueKind.True:
+                enabled = true;
+                return true;
+            case JsonValueKind.False:
+                enabled = false;
+                return true;
+            case JsonValueKind.Number:
+                if (el.TryGetInt32(out var n))
+                {
+                    if (n == 0) { enabled = false; return true; }
+                    if (n == 1) { enabled = true; return true; }
+                    return false;
+                }
+                return false;
+            case JsonValueKind.String:
+            {
+                var s = (el.GetString() ?? "").Trim();
+                if (s is "True" or "true" or "1" or "Enabled" or "Bật" or "Yes")
+                {
+                    enabled = true;
+                    return true;
+                }
+                if (s is "False" or "false" or "0" or "Disabled" or "Tắt" or "No" or "")
+                {
+                    enabled = false;
+                    return true;
+                }
+                // Unknown GPOBoolean / localized — not truthy
+                return false;
+            }
+            case JsonValueKind.Null:
+            case JsonValueKind.Undefined:
+                return false;
+            default:
+                return false;
+        }
+    }
 
     public static bool TryGetTruthy(JsonElement parent, string name, out bool value)
     {

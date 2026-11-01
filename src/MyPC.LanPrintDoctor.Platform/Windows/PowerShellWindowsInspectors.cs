@@ -105,7 +105,7 @@ $result = foreach ($r in $rules) {
   [pscustomobject]@{
     Name = $r.Name
     DisplayName = $r.DisplayName
-    Enabled = [bool]$r.Enabled
+    Enabled = $(if ($null -eq $r.Enabled) { $null } elseif ($r.Enabled -is [bool]) { [bool]$r.Enabled } else { $es=[string]$r.Enabled; if ($es -eq 'True' -or $es -eq '1') { $true } elseif ($es -eq 'False' -or $es -eq '0') { $false } else { $null } })
     Direction = [string]$r.Direction
     Action = [string]$r.Action
     Profile = [string]$r.Profile
@@ -209,7 +209,7 @@ function Get-RuleSnap([string]$name) {
   $r = Get-NetFirewallRule -Name $name -ErrorAction Stop
   $addr = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $r -ErrorAction SilentlyContinue
   return [pscustomobject]@{
-    Enabled = [bool]$r.Enabled
+    Enabled = $(if ($null -eq $r.Enabled) { $null } elseif ($r.Enabled -is [bool]) { [bool]$r.Enabled } else { $es=[string]$r.Enabled; if ($es -eq 'True' -or $es -eq '1') { $true } elseif ($es -eq 'False' -or $es -eq '0') { $false } else { $null } })
     Profile = [string]$r.Profile
     Direction = [string]$r.Direction
     Action = [string]$r.Action
@@ -218,7 +218,7 @@ function Get-RuleSnap([string]$name) {
 }
 function Restore-RuleSnap([string]$name, $s) {
   Set-NetFirewallRule -Name $name -Profile $s.Profile -Direction $s.Direction -Action $s.Action -ErrorAction Stop
-  Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name $name -ErrorAction Stop) -RemoteAddress $s.RemoteAddress -ErrorAction Stop
+  Set-NetFirewallRule -Name $name -RemoteAddress $s.RemoteAddress -ErrorAction Stop
   if ($s.Enabled) { Enable-NetFirewallRule -Name $name -ErrorAction Stop } else { Disable-NetFirewallRule -Name $name -ErrorAction Stop }
 }
 try {
@@ -229,7 +229,7 @@ try {
   $tracked.Add($name) | Out-Null
   # Avoid Enabled+wide-scope window: disable before profile/address mutation, Enable only after LocalSubnet.
   Disable-NetFirewallRule -Name $name -ErrorAction SilentlyContinue
-  Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name $name -ErrorAction Stop) -RemoteAddress LocalSubnet -ErrorAction Stop
+  Set-NetFirewallRule -Name $name -RemoteAddress LocalSubnet -ErrorAction Stop
   $pre = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name $name -ErrorAction Stop) -ErrorAction Stop
   if ([string]$pre.RemoteAddress -notmatch 'LocalSubnet') { throw 'REMOTE_NOT_SET:' + $pre.RemoteAddress }
   Set-NetFirewallRule -Name $name -Profile Private -Direction Inbound -Action Allow -ErrorAction Stop
@@ -285,7 +285,7 @@ try {
             var script = $@"
 $ErrorActionPreference = 'Stop'
 Set-NetFirewallRule -Name '{id}' -Profile {QuoteProfile(profile)} -Direction {direction} -Action {action} -ErrorAction Stop
-Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name '{id}' -ErrorAction Stop) -RemoteAddress {QuoteRemote(remote)} -ErrorAction Stop
+Set-NetFirewallRule -Name '{id}' -RemoteAddress {QuoteRemote(remote)} -ErrorAction Stop
 $chk = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name '{id}' -ErrorAction Stop) -ErrorAction Stop
 if ([string]$chk.RemoteAddress -ne '{remote}' -and [string]$chk.RemoteAddress -notmatch [regex]::Escape('{remote}')) {{ throw 'REMOTE_RESTORE_FAIL:' + $chk.RemoteAddress }}
 {enable} -Name '{id}' -ErrorAction Stop
@@ -344,7 +344,7 @@ function Get-RuleSnap([string]$name) {
   $r = Get-NetFirewallRule -Name $name -ErrorAction Stop
   $addr = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $r -ErrorAction SilentlyContinue
   return [pscustomobject]@{
-    Enabled = [bool]$r.Enabled
+    Enabled = $(if ($null -eq $r.Enabled) { $null } elseif ($r.Enabled -is [bool]) { [bool]$r.Enabled } else { $es=[string]$r.Enabled; if ($es -eq 'True' -or $es -eq '1') { $true } elseif ($es -eq 'False' -or $es -eq '0') { $false } else { $null } })
     Profile = [string]$r.Profile
     Direction = [string]$r.Direction
     Action = [string]$r.Action
@@ -353,7 +353,7 @@ function Get-RuleSnap([string]$name) {
 }
 function Restore-RuleSnap([string]$name, $s) {
   Set-NetFirewallRule -Name $name -Profile $s.Profile -Direction $s.Direction -Action $s.Action -ErrorAction Stop
-  Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name $name -ErrorAction Stop) -RemoteAddress $s.RemoteAddress -ErrorAction Stop
+  Set-NetFirewallRule -Name $name -RemoteAddress $s.RemoteAddress -ErrorAction Stop
   if ($s.Enabled) { Enable-NetFirewallRule -Name $name -ErrorAction Stop } else { Disable-NetFirewallRule -Name $name -ErrorAction Stop }
 }
 try {
@@ -365,7 +365,7 @@ try {
     $snaps[$name] = Get-RuleSnap $name
     $tracked.Add($name) | Out-Null
     Disable-NetFirewallRule -Name $name -ErrorAction SilentlyContinue
-    Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name $name -ErrorAction Stop) -RemoteAddress LocalSubnet -ErrorAction Stop
+    Set-NetFirewallRule -Name $name -RemoteAddress LocalSubnet -ErrorAction Stop
     $pre = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name $name -ErrorAction Stop) -ErrorAction Stop
     if ([string]$pre.RemoteAddress -notmatch 'LocalSubnet') { throw 'REMOTE_NOT_SET:' + $name + ':' + $pre.RemoteAddress }
     Set-NetFirewallRule -Name $name -Profile Private -Direction Inbound -Action Allow -ErrorAction Stop
@@ -434,7 +434,7 @@ $ErrorActionPreference = 'Stop'
 $r = Get-NetFirewallRule -Name '{id}' -ErrorAction Stop
 if ($r.PolicyStore -match 'GP|GroupPolicy') {{ throw 'GPO' }}
 Set-NetFirewallRule -Name '{id}' -Profile {QuoteProfile(Escape(profile))} -Direction {Escape(direction)} -Action {Escape(action)} -ErrorAction Stop
-Set-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name '{id}' -ErrorAction Stop) -RemoteAddress {QuoteRemote(Escape(remote))} -ErrorAction Stop
+Set-NetFirewallRule -Name '{id}' -RemoteAddress {QuoteRemote(Escape(remote))} -ErrorAction Stop
 $chk = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule (Get-NetFirewallRule -Name '{id}' -ErrorAction Stop) -ErrorAction Stop
 if ([string]$chk.RemoteAddress -notmatch [regex]::Escape('{Escape(remote)}') -and [string]$chk.RemoteAddress -ne '{Escape(remote)}') {{ throw 'REMOTE_RESTORE_FAIL' }}
 {enable} -Name '{id}' -ErrorAction Stop

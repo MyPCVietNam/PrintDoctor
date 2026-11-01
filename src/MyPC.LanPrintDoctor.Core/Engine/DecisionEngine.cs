@@ -101,8 +101,9 @@ public sealed class DecisionEngine
                     PossibleCauses = new[] { "Windows Firewall ICMP Echo rule disabled on target", "Third-party firewall ICMP filter", "Router ICMP filter" },
                     RecommendedActions = serverSide
                         ? new[] { "SERVER_ACTION_REQUIRED: run PrintDoctor as Server on the target host", "Do not modify this client firewall for server inbound ICMP" }
-                        : new[] { "Inspect local ICMP Echo Request inbound rules", "Do not treat host as offline" },
-                    RepairId = serverSide ? null : "FW-ICMP-ECHO",
+                        : new[] { "Prefer owned MyPC.PrintDoctor.ICMPv4.Private (Private/LocalSubnet)", "Do not treat host as offline" },
+                    // P2-02: prefer PrintDoctor-owned rule over mutating system FPS group rules.
+                    RepairId = serverSide ? null : "FW-OWNED-ICMP4",
                     RepairOwner = serverSide ? RepairOwnerRole.ServerActionRequired : RepairOwnerRole.LocalServer,
                     VerificationMethod = "Re-run ICMP + TCP probes on owning machine"
                 });
@@ -345,8 +346,8 @@ public sealed class DecisionEngine
                 PossibleCauses = new[] { "Manual disable", "Profile mismatch", "Security software" },
                 RecommendedActions = snap.Role == MachineRole.Client
                     ? new[] { "SERVER_ACTION_REQUIRED if rules are on the print server", "Do not widen client Public profile rules" }
-                    : new[] { "Enable scoped ICMP Echo for Private/LocalSubnet only" },
-                RepairId = snap.Role == MachineRole.Server ? "FW-ICMP-ECHO" : null,
+                    : new[] { "Create owned MyPC.PrintDoctor.ICMPv4.Private (Disabled→verify→Enable)" },
+                RepairId = snap.Role == MachineRole.Server ? "FW-OWNED-ICMP4" : null,
                 RepairOwner = snap.Role == MachineRole.Server ? RepairOwnerRole.LocalServer : RepairOwnerRole.ServerActionRequired,
                 VerificationMethod = "Rule dump + ICMP probe on owning machine"
             });

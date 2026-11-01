@@ -1,16 +1,23 @@
-# Changelog — v1.1.4 (final two safety defects)
+# Changelog — v1.2.0-RC1 (P2 Field Pilot)
 
-## DEFECT 1 — Mutation before tracking
-- Snapshot rule state before any Set-*.
-- Record durable `$tracked` / ChangedRuleIds **before** the first Set-NetFirewall*.
-- Scope while Disabled; Enable only after LocalSubnet confirmed (no Enabled+wide-scope window).
-- On mutation failure: controlled `Restore-RuleSnap` for tracked ids only.
-- ROLLBACK_FAIL ⇒ `UNCERTAIN_STATE` (never Clean).
+## P2-00 Critical Windows API & engine
+- **P2-00-A:** Removed invalid `Set-NetFirewallAddressFilter -AssociatedNetFirewallRule` (not a Set-* parameter). Mutations use `Set-NetFirewallRule -RemoteAddress` / Get→pipe patterns. Live Windows parameter-binding probe on CI.
+- **P2-00-B:** Strict Enabled parsing (`TryParseEnabled`) — `"False"` is never truthy.
+- **P2-00-C:** Write-ahead durable journal (`MutationIntent` + WriteThrough flush) before Apply; corrupt journal fail-closed.
 
-## DEFECT 2 — Empty journal fail-open
-- Existing `repair-journal.json` that is empty/whitespace ⇒ `IsCorrupt` / `CorruptJournal`.
-- Missing file still Clean (fresh session).
-- Corrupt journal refused overwrite; executor returns BLOCKED.
+## P2-01 / P2-02 (RC1 slice)
+- Network root-cause engine (CASE A/B/C, INFRASTRUCTURE_ACTION_REQUIRED).
+- Owned firewall repairs: `MyPC.PrintDoctor.ICMPv4/SMB445/ShaPrint48631/ShaPrint48633.Private`.
+- DecisionEngine prefers owned ICMP (`FW-OWNED-ICMP4`) over mutating system FPS rules.
+- Safe Repair UI requires explicit user choice when multiple repairs exist.
+
+## P2-03+ (partial / deferred for post-RC1)
+- Service start repairs (Spooler/Lanman*) already present from P1.1.
+- Advanced pktmon/WFP and recurrence baselines: P3 — not blocking RC1 P0/P1 gate.
+
+## CI
+- WINDOWS_CI_PASS @ `824f292` — https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41321543958
+- Unit 111 / Integration 10 PASS on windows-latest
 
 ## Non-claims
-Windows physical / read-only field lab still **BLOCKED**. Not FIELD/PRODUCTION READY.
+`FIELD_VALIDATION_PENDING`. Win10/11 physical lab **NOT_RUN**. Not FIELD/PRODUCTION READY.
