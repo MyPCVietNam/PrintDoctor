@@ -15,5 +15,9 @@
 - Repair selection ListBox (no MessageBox cascade for primary choice).
 - SHA-START-PROCESS explicitly NOT_IMPLEMENTED.
 
+## CI
+- WINDOWS_CI_PASS @ `91655ab` — https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41323169805
+- Unit 121 / Integration 10 PASS on windows-latest
+
 ## Non-claims
 FIELD_VALIDATION_PENDING. Physical lab NOT_RUN. Not Production Ready.
