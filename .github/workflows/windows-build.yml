@@ -2,7 +2,7 @@ name: Windows Build
 
 on:
   push:
-    branches: [main, "feat/**", "cursor/**"]
+    branches: [main, "feat/**", "fix/**", "cursor/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:

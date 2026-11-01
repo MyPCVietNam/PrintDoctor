@@ -1,11 +1,17 @@
+using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.ShaPrint;
 
 namespace MyPC.LanPrintDoctor.Platform.Fakes;
 
 public sealed class FakeShaPrintInspector : IShaPrintInspector
 {
-    public ShaPrintInstallInfo Install { get; set; } = new() { Installed = false };
-    public ShaPrintConnectivity Connectivity { get; set; } = new();
+    public ShaPrintInstallInfo Install { get; set; } = new() { Installed = false, ListeningCollectionStatus = ProbeOutcome.Pass };
+    public ShaPrintConnectivity Connectivity { get; set; } = new()
+    {
+        ServerEndpoint = ProbeOutcome.NotTested,
+        DiscoveryPort = ProbeOutcome.NotTested,
+        ClientProxy = ProbeOutcome.NotTested
+    };
     public List<string> FirewallRules { get; set; } = new();
 
     public Task<ShaPrintInstallInfo> GetInstallInfoAsync(CancellationToken ct = default) => Task.FromResult(Install);

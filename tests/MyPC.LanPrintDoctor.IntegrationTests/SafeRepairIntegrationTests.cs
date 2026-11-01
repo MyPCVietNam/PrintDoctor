@@ -1,4 +1,5 @@
 using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
+using MyPC.LanPrintDoctor.Abstractions.Firewall;
 using MyPC.LanPrintDoctor.Abstractions.Network;
 using MyPC.LanPrintDoctor.Abstractions.Services;
 using MyPC.LanPrintDoctor.Core.Models;
@@ -91,7 +92,14 @@ public class SafeRepairIntegrationTests
     public async Task SafeIsolation_NoDestructiveNetworkResetsInRepairSurface()
     {
         var elev = new FakeElevationService { IsAdmin = true };
-        var op = new NetworkProfilePrivateRepair(elev);
+        var profiles = new FakeNetworkProfileService
+        {
+            Profiles =
+            {
+                new NetworkConnectionProfile { InterfaceIndex = 12, Name = "Ethernet", NetworkCategory = "Public" }
+            }
+        };
+        var op = new NetworkProfilePrivateRepair(profiles, elev, preferredInterfaceIndex: 12);
         var preview = await op.PreviewChangesAsync();
         var blob = string.Join(" ", preview.Changes) + " " + preview.Description;
         Assert.DoesNotContain("winsock reset", blob, StringComparison.OrdinalIgnoreCase);

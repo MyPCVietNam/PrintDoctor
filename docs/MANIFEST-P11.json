@@ -1,0 +1,11 @@
+{
+  "product": "MyPC LAN & Print Doctor",
+  "phase": "P1.1",
+  "version": "1.1.0",
+  "baselineCommit": "1647875",
+  "branch": "fix/p11-diagnostic-accuracy-safe-repair",
+  "publishSingleFile": false,
+  "publishShape": "self-contained multi-file win-x64",
+  "fieldReady": false,
+  "productionReady": false
+}

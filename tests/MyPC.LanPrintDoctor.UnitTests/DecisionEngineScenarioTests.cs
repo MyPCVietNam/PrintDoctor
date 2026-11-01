@@ -2,6 +2,7 @@ using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.Firewall;
 using MyPC.LanPrintDoctor.Abstractions.Network;
 using MyPC.LanPrintDoctor.Abstractions.Printing;
+using MyPC.LanPrintDoctor.Abstractions.Repair;
 using MyPC.LanPrintDoctor.Abstractions.Services;
 using MyPC.LanPrintDoctor.Abstractions.ShaPrint;
 using MyPC.LanPrintDoctor.Abstractions.Smb;
@@ -146,7 +147,13 @@ public class DecisionEngineScenarioTests
     public void Scenario11_ShaPrintNotListening()
     {
         var snap = BaseClient("192.168.1.10");
-        snap.ShaPrint = new ShaPrintInstallInfo { Installed = true, ProcessRunning = true, ListeningEndpoints = Array.Empty<string>() };
+        snap.ShaPrint = new ShaPrintInstallInfo
+        {
+            Installed = true,
+            ProcessRunning = true,
+            ListeningEndpoints = Array.Empty<string>(),
+            ListeningCollectionStatus = ProbeOutcome.Pass
+        };
         var f = _engine.Evaluate(snap);
         Assert.Contains(f, x => x.Id == "SHA-003");
     }
@@ -156,7 +163,7 @@ public class DecisionEngineScenarioTests
     {
         var snap = BaseClient("192.168.1.10");
         snap.ShaPrint = new ShaPrintInstallInfo { Installed = true, ProcessRunning = true, ListeningEndpoints = new[] { "0.0.0.0:48631" } };
-        snap.ShaPrintConnectivity = new ShaPrintConnectivity { ServerEndpointReachable = false, Detail = "filtered" };
+        snap.ShaPrintConnectivity = new ShaPrintConnectivity { ServerEndpoint = ProbeOutcome.Fail, Detail = "filtered" };
         var f = _engine.Evaluate(snap);
         Assert.Contains(f, x => x.Id == "SHA-001");
     }
@@ -164,7 +171,6 @@ public class DecisionEngineScenarioTests
     [Fact]
     public void Scenario13_DoesNotSendRawToPrinter()
     {
-        // Architectural guarantee: no RAW send API in inspector
         Assert.Null(typeof(IPrinterInspector).GetMethod("SendRaw"));
     }
 
@@ -182,7 +188,7 @@ public class DecisionEngineScenarioTests
     public async Task Scenario15_RepairBlockedWithoutAdmin()
     {
         var elev = new FakeElevationService { IsAdmin = false };
-        var op = new Repair.Operations.FirewallIcmpEchoRepair(new FakeFirewallInspector(), elev);
+        var op = new FirewallIcmpEchoRepair(new FakeFirewallInspector(), elev);
         var prereq = await op.CheckPrerequisitesAsync();
         Assert.False(prereq.CanProceed);
         Assert.True(prereq.RequiresAdmin);
@@ -191,16 +197,17 @@ public class DecisionEngineScenarioTests
     [Fact]
     public async Task Scenario16_RepairFailsMidway_RollsBack()
     {
-        var elev = new FakeElevationService { IsAdmin = true };
-        var applied = false;
         var rolled = false;
-        var op = new Repair.Operations.FirewallIcmpEchoRepair(
-            new FakeFirewallInspector(),
-            elev,
+        var applied = false;
+        var op = new ScriptableRepair(
             apply: _ => { applied = true; throw new InvalidOperationException("mid-fail"); },
-            rollback: (_, _) => { rolled = true; return Task.CompletedTask; },
-            verify: _ => Task.FromResult(true));
-        var exec = new Repair.RepairExecutor(new Repair.RepairJournal(Path.Combine(Path.GetTempPath(), "lpd-ut-" + Guid.NewGuid().ToString("N"))));
+            verify: _ => Task.FromResult(true),
+            rollback: (_, _) =>
+            {
+                rolled = true;
+                return Task.FromResult(new RollbackResult { Attempted = true, Succeeded = true, Verified = true });
+            });
+        var exec = new RepairExecutor(new RepairJournal(Path.Combine(Path.GetTempPath(), "lpd-ut-" + Guid.NewGuid().ToString("N"))));
         var result = await exec.ExecuteAsync(op, userConfirmed: true);
         Assert.True(applied);
         Assert.True(rolled);
@@ -211,18 +218,20 @@ public class DecisionEngineScenarioTests
     [Fact]
     public async Task Scenario17_RollbackAfterFailedVerify()
     {
-        var elev = new FakeElevationService { IsAdmin = true };
         var rolled = false;
-        var op = new Repair.Operations.FirewallIcmpEchoRepair(
-            new FakeFirewallInspector(),
-            elev,
+        var op = new ScriptableRepair(
             apply: _ => Task.CompletedTask,
-            rollback: (_, _) => { rolled = true; return Task.CompletedTask; },
-            verify: _ => Task.FromResult(false));
-        var exec = new Repair.RepairExecutor(new Repair.RepairJournal(Path.Combine(Path.GetTempPath(), "lpd-ut-" + Guid.NewGuid().ToString("N"))));
+            verify: _ => Task.FromResult(false),
+            rollback: (_, _) =>
+            {
+                rolled = true;
+                return Task.FromResult(new RollbackResult { Attempted = true, Succeeded = true, Verified = true });
+            });
+        var exec = new RepairExecutor(new RepairJournal(Path.Combine(Path.GetTempPath(), "lpd-ut-" + Guid.NewGuid().ToString("N"))));
         var result = await exec.ExecuteAsync(op, userConfirmed: true);
         Assert.True(rolled);
         Assert.False(result.Verified);
+        Assert.True(result.RolledBack);
     }
 
     [Fact]
@@ -287,10 +296,9 @@ public class DecisionEngineScenarioTests
         var snap = BaseClient("printserver");
         snap.Probes = new[]
         {
-            new ConnectivityProbeResult { Target = "printserver", Protocol = ProbeProtocol.Tcp, Success = false, Detail = "NXDOMAIN" },
+            new ConnectivityProbeResult { Target = "printserver", Protocol = ProbeProtocol.Tcp, Outcome = ProbeOutcome.Fail, Detail = "NXDOMAIN" },
             OkTcp("192.168.1.10", 445)
         };
-        // Target hostname DNS fail alone shouldn't create LAN-001 without ICMP/TCP-all-fail against same target
         var f = _engine.Evaluate(snap);
         Assert.DoesNotContain(f, x => x.Id == "LAN-001");
     }
@@ -299,9 +307,17 @@ public class DecisionEngineScenarioTests
     public async Task Scenario24_RepairPreviewMentionsRebootWhenNeeded_IsNotDefault()
     {
         var elev = new FakeElevationService { IsAdmin = true };
-        var op = new NetworkProfilePrivateRepair(elev);
+        var profiles = new FakeNetworkProfileService
+        {
+            Profiles =
+            {
+                new NetworkConnectionProfile { InterfaceIndex = 12, Name = "Ethernet", NetworkCategory = "Public" }
+            }
+        };
+        var op = new NetworkProfilePrivateRepair(profiles, elev, preferredInterfaceIndex: 12);
         var preview = await op.PreviewChangesAsync();
         Assert.DoesNotContain(preview.Changes, c => c.Contains("netsh int ip reset", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(preview.Changes, c => c == "InterfaceIndex=?");
         Assert.True(preview.Reversible);
     }
 
@@ -366,7 +382,13 @@ public class DecisionEngineScenarioTests
             services.Services[name] = new WindowsServiceInfo { Name = name, Status = "Running", StartType = "Automatic" };
         var smb = new FakeSmbInspector
         {
-            Probe = new SmbProbeResult { Target = "192.168.1.10", Tcp445Open = true, Tcp135Open = true, UncReachable = true }
+            Probe = new SmbProbeResult
+            {
+                Target = "192.168.1.10",
+                Tcp445 = ProbeOutcome.Pass,
+                Tcp135 = ProbeOutcome.Pass,
+                Unc = ProbeOutcome.Pass
+            }
         };
         var orch = new DiagnosticOrchestrator(net, new FakeFirewallInspector(), services, smb, new FakePrinterInspector(), new FakeShaPrintInspector());
         var snap = await orch.RunAsync(new DiagnosticRequest { Role = MachineRole.Client, TargetHost = "192.168.1.10" });
@@ -410,7 +432,59 @@ public class DecisionEngineScenarioTests
         Adapters = new[] { LanAdapter() }
     };
 
-    private static ConnectivityProbeResult FailIcmp(string t) => new() { Target = t, Protocol = ProbeProtocol.Icmp, Success = false, Detail = "timeout" };
-    private static ConnectivityProbeResult OkTcp(string t, int p) => new() { Target = t, Protocol = ProbeProtocol.Tcp, Port = p, Success = true };
-    private static ConnectivityProbeResult FailTcp(string t, int p) => new() { Target = t, Protocol = ProbeProtocol.Tcp, Port = p, Success = false };
+    private static ConnectivityProbeResult FailIcmp(string t) => new() { Target = t, Protocol = ProbeProtocol.Icmp, Outcome = ProbeOutcome.Fail, Detail = "timeout" };
+    private static ConnectivityProbeResult OkTcp(string t, int p) => new() { Target = t, Protocol = ProbeProtocol.Tcp, Port = p, Outcome = ProbeOutcome.Pass };
+    private static ConnectivityProbeResult FailTcp(string t, int p) => new() { Target = t, Protocol = ProbeProtocol.Tcp, Port = p, Outcome = ProbeOutcome.Fail };
+
+    /// <summary>Test-only repair with injectable apply/verify/rollback (production ops no longer accept no-op delegates).</summary>
+    private sealed class ScriptableRepair : IRepairOperation
+    {
+        private readonly Func<CancellationToken, Task> _apply;
+        private readonly Func<CancellationToken, Task<bool>> _verify;
+        private readonly Func<RepairBackup, CancellationToken, Task<RollbackResult>> _rollback;
+
+        public ScriptableRepair(
+            Func<CancellationToken, Task> apply,
+            Func<CancellationToken, Task<bool>> verify,
+            Func<RepairBackup, CancellationToken, Task<RollbackResult>> rollback)
+        {
+            _apply = apply;
+            _verify = verify;
+            _rollback = rollback;
+        }
+
+        public string OperationId => "TEST-SCRIPTABLE";
+        public string Title => "Scriptable test repair";
+        public bool IsImplemented => true;
+        public bool SupportsRollback => true;
+        public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalAny;
+        public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
+
+        public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
+            => Task.FromResult(new RepairPrerequisiteResult { CanProceed = true, RequiresAdmin = false });
+
+        public Task CollectEvidenceAsync(CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<RepairPreview> PreviewChangesAsync(CancellationToken ct = default)
+            => Task.FromResult(new RepairPreview
+            {
+                OperationId = OperationId,
+                Title = Title,
+                Description = "test",
+                Reversible = true
+            });
+
+        public Task<RepairBackup> BackupAsync(CancellationToken ct = default)
+            => Task.FromResult(new RepairBackup
+            {
+                BackupId = "bak-test",
+                Path = "journal",
+                CreatedAt = DateTimeOffset.UtcNow,
+                PayloadJson = "{}"
+            });
+
+        public Task ApplyAsync(CancellationToken ct = default) => _apply(ct);
+        public Task<bool> VerifyAsync(CancellationToken ct = default) => _verify(ct);
+        public Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default) => _rollback(backup, ct);
+    }
 }

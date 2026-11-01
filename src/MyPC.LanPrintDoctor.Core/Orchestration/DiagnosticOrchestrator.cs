@@ -85,6 +85,13 @@ public sealed class DiagnosticOrchestrator
         snap.FirewallProfiles = await _firewall.GetProfilesAsync(ct);
         snap.FirewallRules = await _firewall.GetRelevantRulesAsync(ct);
         snap.ThirdPartySecurity = await _firewall.DetectThirdPartySecurityAsync(ct);
+        snap.ThirdPartyCollectionStatus = await _firewall.GetThirdPartyCollectionStatusAsync(ct);
+        snap.CollectorNotes.Add(new CollectorStatusNote
+        {
+            Collector = "ThirdPartySecurity",
+            Outcome = snap.ThirdPartyCollectionStatus,
+            Detail = snap.ThirdPartySecurity.Count == 0 ? "none-or-unknown" : string.Join(",", snap.ThirdPartySecurity.Select(p => p.Name))
+        });
 
         snap.Services = await _services.GetServicesAsync(
             new[] { "LanmanServer", "LanmanWorkstation", "FDResPub", "Spooler", "SSDPSRV", "upnphost" }, ct);
@@ -92,12 +99,39 @@ public sealed class DiagnosticOrchestrator
         snap.SmbConfiguration = await _smb.GetConfigurationAsync(ct);
         snap.Shares = await _smb.GetSharesAsync(ct);
         snap.SharingToggles = await _smb.GetSharingTogglesAsync(ct);
+        snap.CollectorNotes.Add(new CollectorStatusNote
+        {
+            Collector = "SharingToggles",
+            Outcome = snap.SharingToggles.NetworkDiscovery == ProbeOutcome.Unknown || snap.SharingToggles.FileAndPrinterSharing == ProbeOutcome.Unknown
+                ? ProbeOutcome.Unknown
+                : ProbeOutcome.Pass,
+            Detail = snap.SharingToggles.Detail
+        });
         if (!string.IsNullOrWhiteSpace(normalized) && request.Role == MachineRole.Client)
             snap.SmbProbe = await _smb.ProbeRemoteAsync(normalized!, ct);
 
         snap.Printers = await _printers.GetPrintersAsync(ct);
         snap.ShaPrint = await _shaPrint.GetInstallInfoAsync(ct);
+        snap.CollectorNotes.Add(new CollectorStatusNote
+        {
+            Collector = "ShaPrintListening",
+            Outcome = snap.ShaPrint.ListeningCollectionStatus,
+            Detail = string.Join(",", snap.ShaPrint.ListeningEndpoints)
+        });
         snap.ShaPrintConnectivity = await _shaPrint.ProbeConnectivityAsync(normalized, ct);
+
+        snap.CollectorNotes.Add(new CollectorStatusNote
+        {
+            Collector = "Routes",
+            Outcome = snap.Routes.Count > 0 ? ProbeOutcome.Pass : ProbeOutcome.Unknown,
+            Detail = $"count={snap.Routes.Count}"
+        });
+        snap.CollectorNotes.Add(new CollectorStatusNote
+        {
+            Collector = "Neighbors",
+            Outcome = snap.Neighbors.Count > 0 ? ProbeOutcome.Pass : ProbeOutcome.Unknown,
+            Detail = $"count={snap.Neighbors.Count}"
+        });
 
         foreach (var f in _engine.Evaluate(snap))
             snap.Findings.Add(f);

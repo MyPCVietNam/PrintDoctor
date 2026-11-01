@@ -1,3 +1,5 @@
+using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
+
 namespace MyPC.LanPrintDoctor.Abstractions.ShaPrint;
 
 public static class ShaPrintPorts
@@ -16,14 +18,18 @@ public sealed class ShaPrintInstallInfo
     public int? ProcessId { get; init; }
     public bool StartsWithWindows { get; init; }
     public IReadOnlyList<string> ListeningEndpoints { get; init; } = Array.Empty<string>();
+    public ProbeOutcome ListeningCollectionStatus { get; init; } = ProbeOutcome.Unknown;
 }
 
 public sealed class ShaPrintConnectivity
 {
-    public bool ServerEndpointReachable { get; init; }
-    public bool DiscoveryPortOpen { get; init; }
-    public bool ClientProxyListening { get; init; }
+    public ProbeOutcome ServerEndpoint { get; init; } = ProbeOutcome.NotTested;
+    public ProbeOutcome DiscoveryPort { get; init; } = ProbeOutcome.NotTested;
+    public ProbeOutcome ClientProxy { get; init; } = ProbeOutcome.NotTested;
     public string? Detail { get; init; }
+
+    public bool ServerEndpointReachable => ServerEndpoint == ProbeOutcome.Pass;
+    public bool ClientProxyListening => ClientProxy == ProbeOutcome.Pass;
 }
 
 public interface IShaPrintInspector
