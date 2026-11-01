@@ -1,72 +1,60 @@
 namespace MyPC.LanPrintDoctor.Repair;
 
 /// <summary>
-/// Machine-wide exclusive lock preventing concurrent PrintDoctor repairs across
-/// processes and diagnostic sessions. Identity is independent of SessionId.
-/// Prefer named mutex on Windows; always also hold an ACL-friendly file lock
-/// under ProgramData (or an explicit test directory).
-/// Fail-closed: if lock cannot be acquired, Apply must not proceed.
+/// Machine-wide exclusive lock. Production (directory=null) requires the Global named
+/// mutex on Windows and a ProgramData file lock — fail closed if either cannot be owned.
+/// Test overrides pass an isolated directory (file lock only, no Global mutex).
 /// </summary>
 public sealed class MachineRepairLock : IDisposable
 {
     public const string MutexName = @"Global\MyPC.LanPrintDoctor.MachineRepair";
 
-    /// <summary>
-    /// Prefer ProgramData (machine-wide). Fall back to LocalAppData when ProgramData
-    /// is not writable (Linux CI / non-elevated). Named mutex remains the primary
-    /// cross-process exclusion on Windows.
-    /// </summary>
     public static string MachineWideDirectory { get; } = ResolveMachineWideDirectory();
 
     private readonly string _path;
-    private readonly bool _useNamedMutex;
+    private readonly bool _productionMachineWide;
     private FileStream? _stream;
     private Mutex? _mutex;
     private bool _mutexOwned;
 
     public bool Acquired { get; private set; }
     public string LockPath => _path;
+    public bool UsedNamedMutex => _productionMachineWide && _mutexOwned;
 
     /// <param name="directory">
-    /// Optional override for unit tests. Production callers must pass null so the
-    /// machine-wide path is used (never a per-session journal folder).
-    /// Named mutex is used only for the machine-wide path so parallel unit tests
-    /// with isolated lock directories do not contend on Global\…
+    /// Null = production machine-wide path + Global mutex (fail closed).
+    /// Non-null = isolated test lock (file only).
     /// </param>
     public MachineRepairLock(string? directory = null)
     {
-        _useNamedMutex = string.IsNullOrWhiteSpace(directory);
-        var dir = _useNamedMutex ? MachineWideDirectory : directory!;
+        _productionMachineWide = string.IsNullOrWhiteSpace(directory);
+        var dir = _productionMachineWide ? MachineWideDirectory : directory!;
         Directory.CreateDirectory(dir);
         _path = Path.Combine(dir, "repair.lock");
     }
 
     private static string ResolveMachineWideDirectory()
     {
-        foreach (var root in new[]
-                 {
-                     Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                     Path.GetTempPath()
-                 })
+        // Prefer ProgramData. Do not silently substitute a per-user path for production
+        // identity — if ProgramData is unusable, TryAcquire will fail closed on Windows
+        // when the mutex/file cannot be taken. LocalAppData is only used when ProgramData
+        // is missing entirely (non-Windows CI scaffolding).
+        var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        if (!string.IsNullOrWhiteSpace(programData))
         {
-            if (string.IsNullOrWhiteSpace(root)) continue;
+            var dir = Path.Combine(programData, "MyPC", "LanPrintDoctor", "locks");
             try
             {
-                var dir = Path.Combine(root, "MyPC", "LanPrintDoctor", "locks");
                 Directory.CreateDirectory(dir);
-                var probe = Path.Combine(dir, ".write-probe");
-                File.WriteAllText(probe, "ok");
-                File.Delete(probe);
                 return dir;
             }
             catch
             {
-                /* try next root */
+                /* TryAcquire will fail closed if unwritable */
+                return dir;
             }
         }
 
-        // Last resort — still prefer a stable name under temp.
         var fallback = Path.Combine(Path.GetTempPath(), "MyPC.LanPrintDoctor.locks");
         Directory.CreateDirectory(fallback);
         return fallback;
@@ -91,9 +79,9 @@ public sealed class MachineRepairLock : IDisposable
 
     private bool TryAcquireOnce()
     {
-        // Named mutex only for production machine-wide locks (Windows Global\).
-        if (_useNamedMutex)
+        if (_productionMachineWide && OperatingSystem.IsWindows())
         {
+            // HF1 GATE E: Global mutex is mandatory on Windows production — fail closed.
             try
             {
                 _mutex = new Mutex(initiallyOwned: false, name: MutexName, createdNew: out _);
@@ -103,8 +91,7 @@ public sealed class MachineRepairLock : IDisposable
                 }
                 catch (AbandonedMutexException)
                 {
-                    // Prior process crashed while holding the mutex — we now own it.
-                    _mutexOwned = true;
+                    _mutexOwned = true; // prior crash — recover ownership
                 }
 
                 if (!_mutexOwned)
@@ -116,18 +103,18 @@ public sealed class MachineRepairLock : IDisposable
             }
             catch (WaitHandleCannotBeOpenedException)
             {
-                _mutex = null;
-                _mutexOwned = false;
+                ReleaseMutexOnly();
+                return false;
             }
             catch (UnauthorizedAccessException)
             {
-                _mutex = null;
-                _mutexOwned = false;
+                ReleaseMutexOnly();
+                return false;
             }
             catch (IOException)
             {
-                _mutex = null;
-                _mutexOwned = false;
+                ReleaseMutexOnly();
+                return false;
             }
         }
 
@@ -137,7 +124,7 @@ public sealed class MachineRepairLock : IDisposable
             using var sw = new StreamWriter(_stream, leaveOpen: true);
             sw.WriteLine(DateTimeOffset.UtcNow.ToString("O"));
             sw.WriteLine(Environment.ProcessId);
-            sw.WriteLine(_useNamedMutex ? MutexName : "file-only");
+            sw.WriteLine(_productionMachineWide ? MutexName : "test-file-lock");
             sw.Flush();
             _stream.Flush(true);
             return true;

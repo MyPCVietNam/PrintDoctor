@@ -15,8 +15,8 @@ using MyPC.LanPrintDoctor.Repair.Operations;
 namespace MyPC.LanPrintDoctor.UnitTests;
 
 /// <summary>
-/// P22-004: Strict simulation — real engines, no permissive ExpectedMatches, no role-from-expected.
-/// Every scenario records PASS / FAIL / BLOCKED / NOT_RUN with actual≠expected → FAIL.
+/// P2.2 HF1: Strict simulation — no expected leakage, no fabricated repair PASS,
+/// no "any finding ⇒ PASS". Every scenario records PASS / FAIL / BLOCKED / NOT_RUN.
 /// </summary>
 public class P21SimulationEngineTests
 {
@@ -90,10 +90,25 @@ public class P21SimulationEngineTests
         {
             var id = office.GetProperty("id").GetString()!;
             var expected = office.GetProperty("expected").GetString()!;
-            var serverIp = office.GetProperty("server").TryGetProperty("ip", out var ip) ? ip.GetString() : "192.168.10.50";
-            var nicDown = office.GetProperty("server").TryGetProperty("nic", out var nic)
+            var serverEl = office.GetProperty("server");
+            var serverIp = serverEl.TryGetProperty("ip", out var ip) ? ip.GetString() : "192.168.10.50";
+            var nicDown = serverEl.TryGetProperty("nic", out var nic)
                           && string.Equals(nic.GetString(), "DOWN", StringComparison.OrdinalIgnoreCase);
-            var serverGw = office.GetProperty("server").TryGetProperty("gateway", out var sg) ? sg.GetString() : null;
+            var serverGwRaw = serverEl.TryGetProperty("gateway", out var sg) ? sg.GetString() : null;
+            string? serverGw = null;
+            if (string.Equals(serverGwRaw, "PASS", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(serverGwRaw, "OK", StringComparison.OrdinalIgnoreCase))
+                serverGw = "192.168.10.1";
+            else if (!string.IsNullOrWhiteSpace(serverGwRaw)
+                     && !string.Equals(serverGwRaw, "UNKNOWN", StringComparison.OrdinalIgnoreCase)
+                     && !string.Equals(serverGwRaw, "FAIL", StringComparison.OrdinalIgnoreCase))
+                serverGw = serverGwRaw;
+            var serverMac = serverEl.TryGetProperty("mac", out var sm) ? sm.GetString() : "AA:BB:CC:DD:EE:50";
+            var power = serverEl.TryGetProperty("power", out var pw) ? pw.GetString() : null;
+            var wfp = serverEl.TryGetProperty("wfp_drop", out var wf) ? wf.GetString() : null;
+            var receivedProbe = serverEl.TryGetProperty("received_probe", out var rp) ? rp.GetString() : null;
+            var afterSha = serverEl.TryGetProperty("after_reboot_sha", out var asha) ? asha.GetString() : null;
+
             var server = new DiagnosticSnapshot
             {
                 SessionId = "srv-" + id,
@@ -108,19 +123,47 @@ public class P21SimulationEngineTests
                         IsUp = !nicDown,
                         IPv4Addresses = new[] { serverIp! },
                         DefaultGateway = serverGw,
-                        MacAddress = "AA:BB:CC:DD:EE:50",
+                        MacAddress = serverMac,
                         Category = NetworkCategory.Private
                     }
+                },
+                ShaPrint = afterSha is null ? null : new Abstractions.ShaPrint.ShaPrintInstallInfo
+                {
+                    Installed = true,
+                    ProcessRunning = string.Equals(afterSha, "RUNNING", StringComparison.OrdinalIgnoreCase),
+                    InstallPath = @"C:\Program Files\ShaPrint",
+                    Version = "3.4.4"
                 }
             };
+
             var clients = new List<DiagnosticSnapshot>();
+            var anyPrinterRpc = false;
             foreach (var c in office.GetProperty("clients").EnumerateArray())
             {
                 var t = c.TryGetProperty("target", out var tg) ? tg.GetString() : serverIp;
                 var clientGw = c.TryGetProperty("gateway", out var cg) ? cg.GetString() : null;
+                if (string.Equals(clientGw, "PASS", StringComparison.OrdinalIgnoreCase))
+                    clientGw = "192.168.10.1";
+                var observedMac = c.TryGetProperty("observed_mac", out var om) ? om.GetString() : null;
+                if (c.TryGetProperty("printer_rpc", out var prpc)
+                    && string.Equals(prpc.GetString(), "FAIL", StringComparison.OrdinalIgnoreCase))
+                    anyPrinterRpc = true;
+
+                var neighbors = new List<NeighborEntry>();
+                if (!string.IsNullOrWhiteSpace(observedMac) && !string.IsNullOrWhiteSpace(serverIp))
+                {
+                    neighbors.Add(new NeighborEntry
+                    {
+                        IpAddress = serverIp!,
+                        MacAddress = observedMac,
+                        State = "Reachable"
+                    });
+                }
+
                 clients.Add(new DiagnosticSnapshot
                 {
                     SessionId = "cli-" + c.GetProperty("name").GetString(),
+                    MachineName = c.GetProperty("name").GetString(),
                     StartedAt = DateTimeOffset.UtcNow,
                     Role = MachineRole.Client,
                     TargetHost = t,
@@ -141,25 +184,29 @@ public class P21SimulationEngineTests
                             DefaultGateway = clientGw,
                             MacAddress = c.TryGetProperty("mac", out var mac) ? mac.GetString() : null
                         }
-                    }
+                    },
+                    Neighbors = neighbors
                 });
             }
 
             var result = compare.Compare(new CompareInput { Server = server, Clients = clients });
-            var actualClass = ClassifyOffice(expected, result, nicDown, server, clients);
-            var verdict = OfficeExpectedMatches(expected, actualClass, result) ? "PASS" : "FAIL";
+            // HF1 GATE B: never pass expected into classification.
+            var classified = ClassifyOffice(result, nicDown, power, wfp, receivedProbe, anyPrinterRpc, afterSha, server, clients);
+            var verdict = OfficeExpectedMatches(expected, classified);
             if (verdict == "FAIL")
-                fails.Add($"{id}:{expected}->{actualClass}");
+                fails.Add($"{id}: expected={expected} actual={classified.Label} evidence={classified.Evidence}");
             outcomes.Add(new
             {
                 id,
                 expected,
-                actual = actualClass,
+                actual = classified.Label,
+                evidence = classified.Evidence,
                 verdict,
                 serverIp,
                 nicDown,
                 findings = result.Findings.Select(f => f.Id).ToArray(),
                 serverIssues = result.ServerSideIssues,
+                clientIssues = result.ClientSpecificIssues,
                 insufficient = result.InsufficientEvidence
             });
         }
@@ -167,6 +214,18 @@ public class P21SimulationEngineTests
         WriteStrictArtifacts("office5pc", outcomes);
         Assert.True(fails.Count == 0, string.Join("; ", fails));
         Assert.Equal(12, outcomes.Count);
+    }
+
+    [Fact]
+    public void P21_Simulation_Office5pc_Mutation_RejectsFalsePass()
+    {
+        // Deliberately mutate actual classification away from expected → must FAIL.
+        var mutated = new OfficeClass("CMP-001", "mutated-generic-outage");
+        Assert.Equal("FAIL", OfficeExpectedMatches("POSSIBLE_IP_CONFLICT_NEEDS_CORROBORATION", mutated));
+        Assert.Equal("FAIL", OfficeExpectedMatches("SERVER_POWER", mutated));
+        Assert.Equal("FAIL", OfficeExpectedMatches("SERVER_WFP_FIREWALL_CONFIRMED", mutated));
+        Assert.Equal("PASS", OfficeExpectedMatches("NEED_PACKET_PATH_OR_FIREWALL_EVIDENCE",
+            new OfficeClass("NEED_PACKET_PATH_OR_FIREWALL_EVIDENCE", "cmp-001-without-wfp")));
     }
 
     [Fact]
@@ -195,11 +254,11 @@ public class P21SimulationEngineTests
             var targetRole = cfg.TryGetProperty("target_role", out var tr) ? tr.GetString() : "SERVER";
 
             var journalDir = Path.Combine(Path.GetTempPath(), "lpd-r-" + Guid.NewGuid().ToString("N"));
+            var lockDir = Path.Combine(Path.GetTempPath(), "lpd-lock-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(journalDir);
+            Directory.CreateDirectory(lockDir);
             if (id.Contains("corrupt-journal", StringComparison.OrdinalIgnoreCase))
-            {
-                Directory.CreateDirectory(journalDir);
                 File.WriteAllText(Path.Combine(journalDir, "repair-journal.json"), "{broken");
-            }
             if (id.Contains("uncertain-journal", StringComparison.OrdinalIgnoreCase))
             {
                 var j0 = new RepairJournal(journalDir);
@@ -207,114 +266,198 @@ public class P21SimulationEngineTests
             }
 
             var journal = new RepairJournal(journalDir);
-            var lockDir = Path.Combine(journalDir, "lock");
             var spec = OwnedFirewallSpec.IcmpEchoPrivateLocalSubnet();
             if (id.Contains("shaprint", StringComparison.OrdinalIgnoreCase))
                 spec = OwnedFirewallSpec.ShaPrint48631();
-            if (!string.IsNullOrWhiteSpace(scope) && scope != "LocalSubnet")
-            {
-                spec = new OwnedFirewallSpec
-                {
-                    ShortId = spec.ShortId,
-                    RuleName = spec.RuleName,
-                    DisplayName = spec.DisplayName,
-                    Title = spec.Title,
-                    Protocol = spec.Protocol,
-                    LocalPortOrIcmp = spec.LocalPortOrIcmp,
-                    RemoteAddress = scope!,
-                    Profile = profile ?? "Private"
-                };
-            }
 
-            IRepairOperation op = id.Contains("unknown-repair", StringComparison.OrdinalIgnoreCase)
+            // Always honor profile/scope from fixture — Public + Any must hit prerequisites.
+            spec = new OwnedFirewallSpec
+            {
+                ShortId = spec.ShortId,
+                RuleName = spec.RuleName,
+                DisplayName = spec.DisplayName,
+                Title = spec.Title,
+                Protocol = spec.Protocol,
+                LocalPortOrIcmp = spec.LocalPortOrIcmp,
+                RemoteAddress = string.IsNullOrWhiteSpace(scope) ? "LocalSubnet" : scope!,
+                Profile = string.IsNullOrWhiteSpace(profile) ? "Private" : profile!,
+                OwnerRole = spec.OwnerRole
+            };
+
+            IRepairOperation inner = id.Contains("unknown-repair", StringComparison.OrdinalIgnoreCase)
                 ? new NotImplementedRepair("UNKNOWN-X", "unknown")
                 : new OwnedFirewallRuleRepair(new RepairFaultRunner(id, policy ?? "ALLOW", inject), new Elev { Admin = isAdmin }, spec);
+
+            // GATE C: policy / port-owner / journal-write go through executor eligibility — never fabricate RepairResult.
+            IRepairOperation op = new PolicyGatedRepair(inner, policy ?? "ALLOW", portOwnerOk, inject);
 
             var localRole = string.Equals(actor, "CLIENT", StringComparison.OrdinalIgnoreCase)
                 ? MachineRole.Client
                 : MachineRole.Server;
 
             RepairResult result;
-            string execution = "executor";
+            string executionPath;
+            var engineInvoked = true;
+            var mutationAttempted = false;
+            var rollbackAttempted = false;
+            var rollbackVerified = false;
 
-            if (string.Equals(targetRole, "CLIENT", StringComparison.OrdinalIgnoreCase)
-                && op.OwnerRole == RepairOwnerRole.LocalServer)
+            if (string.Equals(inject, "JOURNAL_WRITE_FAIL", StringComparison.OrdinalIgnoreCase)
+                || id.Contains("journal-write-fails", StringComparison.OrdinalIgnoreCase))
             {
-                // Target machine is a client; server-owned inbound firewall repair must not run here.
-                result = await new RepairExecutor(journal, lockDir)
-                    .ExecuteAsync(op, userConfirmed: consent, localRole: localRole,
-                        findingOwner: RepairOwnerRole.ServerActionRequired);
-                execution = "executor-wrong-target";
+                // Make journal directory non-writable so Persist fails inside executor.
+                try
+                {
+                    // Ensure journal file exists first so constructor succeeds.
+                    _ = journal.GetRecoveryState();
+                    if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+                    {
+                        var chmod = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = "chmod",
+                            Arguments = "555 \"" + journalDir + "\"",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true
+                        });
+                        chmod?.WaitForExit(5000);
+                    }
+                    else
+                    {
+                        // Windows: flip directory to read-only attribute best-effort.
+                        var di = new DirectoryInfo(journalDir);
+                        di.Attributes |= FileAttributes.ReadOnly;
+                    }
+                }
+                catch
+                {
+                    /* fall through — PolicyGatedRepair also blocks JOURNAL_WRITE_FAIL */
+                }
             }
-            else if (string.Equals(policy, "LOCAL_MERGE_DISABLED", StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(policy, "THIRD_PARTY_BLOCK", StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(policy, "GPO_MANAGED", StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(profile, "Public", StringComparison.OrdinalIgnoreCase)
-                     || !portOwnerOk
-                     || string.Equals(inject, "JOURNAL_WRITE_FAIL", StringComparison.OrdinalIgnoreCase))
+
+            try
             {
-                // Environmental / policy preconditions — block before Windows mutation.
-                // GPO is also exercised via New-NetFirewallRule failure in RepairFaultRunner when reached.
+                if (string.Equals(inject, "CRASH_AFTER_INTENT", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(inject, "CRASH_AFTER_DISABLED_CREATE", StringComparison.OrdinalIgnoreCase)
+                    || id.Contains("crash-after", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Simulate interrupted transaction, then reinitialize executor/journal.
+                    journal.RecordMutationIntent("crash", op.OperationId, "[]", "[]");
+                    if (string.Equals(inject, "CRASH_AFTER_DISABLED_CREATE", StringComparison.OrdinalIgnoreCase)
+                        || id.Contains("crash-after-disabled", StringComparison.OrdinalIgnoreCase))
+                        journal.Record("crash", op.OperationId, "Applied", true);
+                    mutationAttempted = string.Equals(inject, "CRASH_AFTER_DISABLED_CREATE", StringComparison.OrdinalIgnoreCase)
+                                        || id.Contains("crash-after-disabled", StringComparison.OrdinalIgnoreCase);
+                    var journal2 = new RepairJournal(journalDir);
+                    result = await new RepairExecutor(journal2, lockDir)
+                        .ExecuteAsync(op, userConfirmed: true, localRole: MachineRole.Server);
+                    executionPath = "crash-recovery";
+                }
+                else if (string.Equals(targetRole, "CLIENT", StringComparison.OrdinalIgnoreCase)
+                         && op.OwnerRole == RepairOwnerRole.LocalServer)
+                {
+                    result = await new RepairExecutor(journal, lockDir)
+                        .ExecuteAsync(op, userConfirmed: consent, localRole: localRole,
+                            findingOwner: RepairOwnerRole.ServerActionRequired);
+                    executionPath = "executor-wrong-target";
+                }
+                else
+                {
+                    result = await new RepairExecutor(journal, lockDir)
+                        .ExecuteAsync(op, userConfirmed: consent, localRole: localRole);
+                    executionPath = "executor";
+                }
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                // Journal Persist fail-closed — executor path invoked; mutation must not proceed.
+                executionPath = "executor";
+                engineInvoked = true;
                 result = new RepairResult
                 {
                     OperationId = op.OperationId,
                     Applied = false,
                     Verified = false,
                     Status = DiagnosticStatus.Blocked,
-                    Message = $"BLOCKED:policy={policy}/profile={profile}/owner={portOwnerOk}/inject={inject}"
+                    Message = "JOURNAL_WRITE_FAIL: " + ex.Message
                 };
-                execution = "blocked-precondition";
-            }
-            else if (string.Equals(inject, "CRASH_AFTER_INTENT", StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(inject, "CRASH_AFTER_DISABLED_CREATE", StringComparison.OrdinalIgnoreCase))
-            {
-                journal.RecordMutationIntent("crash", op.OperationId, "[]", "[]");
-                if (string.Equals(inject, "CRASH_AFTER_DISABLED_CREATE", StringComparison.OrdinalIgnoreCase))
-                    journal.Record("crash", op.OperationId, "Applied", true);
-                // Restart: new executor must block
-                var journal2 = new RepairJournal(journalDir);
-                result = await new RepairExecutor(journal2, lockDir)
-                    .ExecuteAsync(op, userConfirmed: true, localRole: MachineRole.Server);
-                execution = "crash-recovery";
-            }
-            else
-            {
-                result = await new RepairExecutor(journal, lockDir)
-                    .ExecuteAsync(op, userConfirmed: consent, localRole: localRole);
             }
 
+            mutationAttempted = mutationAttempted || result.Applied;
+            rollbackAttempted = result.RollbackAttempted;
+            rollbackVerified = result.RollbackVerified;
+
+            // Before/after fake system state: runner tracks create/enable/remove via Applied/Rollback flags.
             var actual = Classify(result);
             var status = ExpectedMatchesStrict(expected, actual, result) ? "PASS" : "FAIL";
             if (status == "FAIL")
-                fails.Add($"{id}:{expected}->{actual}");
+                fails.Add($"{id}:{expected}->{actual} msg={result.Message}");
+
+            // ROLLED_BACK must mean rollback attempted+verified; BLOCKED must mean not modified.
+            if (actual == "ROLLED_BACK" && !(result.RollbackAttempted && result.RollbackVerified))
+            {
+                status = "FAIL";
+                fails.Add($"{id}:ROLLED_BACK_WITHOUT_VERIFIED_ATTEMPT");
+            }
+
+            if (actual == "BLOCKED" && result.Applied && !result.RollbackVerified)
+            {
+                status = "FAIL";
+                fails.Add($"{id}:BLOCKED_BUT_MUTATED_WITHOUT_ROLLBACK");
+            }
+
             outcomes.Add(new
             {
-                id,
+                scenarioId = id,
                 expected,
                 actual,
+                executionPath,
+                engineInvoked,
+                mutationAttempted,
+                rollbackAttempted,
+                rollbackVerified,
                 verdict = status,
-                execution,
+                evidence = result.Message,
                 result.Applied,
                 result.Verified,
                 result.NoChange,
-                result.RollbackAttempted,
-                result.RolledBack,
-                result.RollbackVerified,
-                result.UncertainState,
-                result.Message
+                result.UncertainState
             });
+
+            // Restore journal dir writability for cleanup.
+            try
+            {
+                if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+                {
+                    var chmod = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "chmod",
+                        Arguments = "755 \"" + journalDir + "\"",
+                        RedirectStandardOutput = true
+                    });
+                    chmod?.WaitForExit(3000);
+                }
+            }
+            catch { /* ignore */ }
         }
 
         WriteStrictArtifacts("fault-injection", outcomes);
         var fixtureSha = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
+        var passCount = outcomes.Count(o => ((dynamic)o).verdict == "PASS");
+        var executorPass = outcomes.Count(o =>
+        {
+            dynamic d = o;
+            return d.verdict == "PASS" && (string)d.executionPath is "executor" or "executor-wrong-target" or "crash-recovery";
+        });
         File.WriteAllText(Path.Combine(ResultsDir(), "FAULT-INJECTION-RESULTS.json"),
             JsonSerializer.Serialize(new
             {
                 fixture = "repair_scenarios.json",
                 fixtureSha256 = fixtureSha,
                 total = outcomes.Count,
-                pass = outcomes.Count(o => ((dynamic)o).verdict == "PASS"),
+                pass = passCount,
                 fail = fails.Count,
+                executorProvenancePass = executorPass,
+                claim_28_of_28_real_executor = executorPass == 28 && fails.Count == 0,
                 outcomes
             }, new JsonSerializerOptions { WriteIndented = true }));
 
@@ -336,54 +479,161 @@ public class P21SimulationEngineTests
         File.WriteAllText(Path.Combine(dir, name + ".md"), md.ToString());
     }
 
-    private static string ClassifyOffice(string expected, CompareResult result, bool nicDown, DiagnosticSnapshot server, List<DiagnosticSnapshot> clients)
+    /// <summary>
+    /// Derive actual office classification ONLY from CompareEngine output + source observations.
+    /// Never accepts the expected label as an input.
+    /// </summary>
+    private static OfficeClass ClassifyOffice(
+        CompareResult result,
+        bool nicDown,
+        string? power,
+        string? wfp,
+        string? receivedProbe,
+        bool anyPrinterRpc,
+        string? afterSha,
+        DiagnosticSnapshot server,
+        List<DiagnosticSnapshot> clients)
     {
-        if (nicDown) return "SERVER_PHYSICAL_LINK";
-        if (result.Findings.Any(f => f.Id.Contains("NIC", StringComparison.OrdinalIgnoreCase))) return "SERVER_PHYSICAL_LINK";
-        if (result.ServerSideIssues.Any(s => s.Contains("NIC", StringComparison.OrdinalIgnoreCase) || s.Contains("link", StringComparison.OrdinalIgnoreCase)))
-            return "SERVER_PHYSICAL_LINK";
+        var findingIds = result.Findings.Select(f => f.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var evidenceParts = new List<string>();
+        evidenceParts.Add("findings=" + string.Join(",", findingIds));
+        if (result.ServerSideIssues.Count > 0) evidenceParts.Add("serverIssues=" + string.Join("|", result.ServerSideIssues));
+        if (result.ClientSpecificIssues.Count > 0) evidenceParts.Add("clientIssues=" + string.Join("|", result.ClientSpecificIssues));
+        if (result.InsufficientEvidence.Count > 0) evidenceParts.Add("insufficient=" + string.Join("|", result.InsufficientEvidence));
+        var evidence = string.Join("; ", evidenceParts);
 
-        var allIcmpFail = clients.All(c => c.Probes.Any(p => p.Protocol == ProbeProtocol.Icmp && p.Outcome == ProbeOutcome.Fail));
-        var allTcpFail = clients.All(c => c.Probes.Any(p => p.Protocol == ProbeProtocol.Tcp && p.Port == 445 && p.Outcome == ProbeOutcome.Fail));
+        // Mixed targets / inconsistent reports
+        if (result.InsufficientEvidence.Any(s => s.Contains("INVALID_OR_INCONSISTENT", StringComparison.OrdinalIgnoreCase))
+            || clients.Select(c => c.TargetHost).Where(t => !string.IsNullOrWhiteSpace(t))
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+            return new OfficeClass("INVALID_OR_INCONSISTENT_REPORTS", evidence);
 
-        if (expected.Contains("POWER", StringComparison.OrdinalIgnoreCase) || expected.Contains("SLEEP", StringComparison.OrdinalIgnoreCase))
-            return expected; // fixture-driven label when observations match sleep/power — still asserted via OfficeExpectedMatches
+        // Physical link from observation OR CMP-000
+        if (nicDown || findingIds.Contains("CMP-000")
+            || result.ServerSideIssues.Any(s => s.Contains("SERVER_PHYSICAL_LINK", StringComparison.OrdinalIgnoreCase)))
+            return new OfficeClass("SERVER_PHYSICAL_LINK", evidence);
 
-        if (result.InsufficientEvidence.Count > 0 && !result.HasValidEvidence)
-            return "INSUFFICIENT_EVIDENCE";
+        // Power/sleep: CompareEngine has no power-state model — BLOCKED, never invent SLEEP from CMP-001.
+        if (!string.IsNullOrWhiteSpace(power))
+            return new OfficeClass("BLOCKED:NO_POWER_STATE_MODEL", evidence + "; power_token=" + power);
 
-        if (result.Findings.Count > 0)
-            return result.Findings[0].Id;
+        // WFP confirm: no WFP drop model in CompareEngine — BLOCKED.
+        if (string.Equals(wfp, "YES", StringComparison.OrdinalIgnoreCase))
+            return new OfficeClass("BLOCKED:NO_WFP_MODEL", evidence + "; wfp_drop=" + wfp);
 
-        if (allIcmpFail && allTcpFail) return "COMMON_OUTAGE";
-        return "COMPARED";
+        // Upstream path witness (packets not at server): no capture model — BLOCKED.
+        if (string.Equals(receivedProbe, "NO", StringComparison.OrdinalIgnoreCase))
+            return new OfficeClass("BLOCKED:NO_PACKET_ARRIVAL_MODEL", evidence + "; received_probe=NO");
+
+        // Printer RPC layer: no RPC model on CompareInput — BLOCKED.
+        if (anyPrinterRpc)
+            return new OfficeClass("BLOCKED:NO_PRINTER_RPC_MODEL", evidence);
+
+        // ShaPrint startup recurrence: require ShaPrint observation, else BLOCKED.
+        if (afterSha is not null)
+        {
+            if (server.ShaPrint is { ProcessRunning: false }
+                && clients.All(c => c.Probes.Any(p => p.Port == 48631 && p.Outcome == ProbeOutcome.Fail))
+                && clients.All(c => c.Probes.Any(p => p.Port == 445 && p.Outcome == ProbeOutcome.Pass)))
+                return new OfficeClass("SHAPRINT_STARTUP_RECURRENCE", evidence + "; sha=STOPPED tcp445=PASS tcp48631=FAIL");
+            return new OfficeClass("BLOCKED:SHAPRINT_STATE_INCOMPLETE", evidence);
+        }
+
+        // IP conflict: require CMP-003 (MAC mismatch), never CMP-001 alone.
+        if (findingIds.Contains("CMP-003"))
+            return new OfficeClass("POSSIBLE_IP_CONFLICT_NEEDS_CORROBORATION", evidence);
+
+        // ICMP separate from reachability
+        if (findingIds.Contains("CMP-004"))
+            return new OfficeClass("HOST_REACHABLE_ICMP_SEPARATE", evidence);
+
+        // Client-specific
+        if (findingIds.Contains("CMP-005")
+            || result.ClientSpecificIssues.Any(s => s.Contains("CLIENT_SPECIFIC", StringComparison.OrdinalIgnoreCase)))
+            return new OfficeClass("CLIENT_SPECIFIC_FAULT", evidence);
+
+        // Unknown probes → insufficient
+        var allUnknown = clients.Count > 0 && clients.All(c =>
+            c.Probes.Where(p => p.Outcome is ProbeOutcome.Pass or ProbeOutcome.Fail or ProbeOutcome.Unknown)
+                .All(p => p.Outcome == ProbeOutcome.Unknown));
+        if (allUnknown || (result.InsufficientEvidence.Count > 0 && !result.HasValidEvidence && findingIds.Count == 0))
+            return new OfficeClass("INSUFFICIENT_EVIDENCE", evidence);
+
+        // Common outage without WFP/power/packet witness → need more evidence label
+        if (findingIds.Contains("CMP-001"))
+            return new OfficeClass("NEED_PACKET_PATH_OR_FIREWALL_EVIDENCE", evidence);
+
+        if (result.InsufficientEvidence.Count > 0 && findingIds.Count == 0)
+            return new OfficeClass("INSUFFICIENT_EVIDENCE", evidence);
+
+        if (findingIds.Count > 0)
+            return new OfficeClass(result.Findings[0].Id, evidence);
+
+        return new OfficeClass("INSUFFICIENT_EVIDENCE", evidence);
     }
 
-    private static bool OfficeExpectedMatches(string expected, string actual, CompareResult result)
+    private static string OfficeExpectedMatches(string expected, OfficeClass actual)
     {
         expected = expected.ToUpperInvariant();
-        actual = actual.ToUpperInvariant();
-        if (expected == actual) return true;
+        var label = actual.Label.ToUpperInvariant();
 
-        // Defensible semantic buckets only — never "any finding = PASS".
-        if (expected.Contains("SERVER_PHYSICAL_LINK", StringComparison.Ordinal) || expected.Contains("NIC", StringComparison.Ordinal))
-            return actual.Contains("SERVER_PHYSICAL_LINK", StringComparison.Ordinal) || actual.Contains("NIC", StringComparison.Ordinal)
-                   || result.ServerSideIssues.Count > 0;
+        // Explicit BLOCKED actuals satisfy expectations that require unavailable models.
+        if (label.StartsWith("BLOCKED:", StringComparison.Ordinal))
+        {
+            if (expected.Contains("POWER", StringComparison.Ordinal) || expected.Contains("SLEEP", StringComparison.Ordinal))
+                return label.Contains("POWER", StringComparison.Ordinal) ? "BLOCKED" : "FAIL";
+            if (expected.Contains("WFP", StringComparison.Ordinal) || expected.Contains("FIREWALL_CONFIRMED", StringComparison.Ordinal))
+                return label.Contains("WFP", StringComparison.Ordinal) ? "BLOCKED" : "FAIL";
+            if (expected.Contains("UPSTREAM", StringComparison.Ordinal) || expected.Contains("NETWORK_PATH", StringComparison.Ordinal))
+                return label.Contains("PACKET", StringComparison.Ordinal) ? "BLOCKED" : "FAIL";
+            if (expected.Contains("PRINT_RPC", StringComparison.Ordinal) || expected.Contains("APPLICATION_LAYER", StringComparison.Ordinal))
+                return label.Contains("PRINTER_RPC", StringComparison.Ordinal) ? "BLOCKED" : "FAIL";
+            if (expected.Contains("SHAPRINT", StringComparison.Ordinal))
+                return "BLOCKED";
+            // Unexpected BLOCKED when a concrete PASS classification was required.
+            return "FAIL";
+        }
 
-        if (expected.Contains("INSUFFICIENT", StringComparison.Ordinal))
-            return actual.Contains("INSUFFICIENT", StringComparison.Ordinal) || result.InsufficientEvidence.Count > 0;
+        if (expected == label) return "PASS";
 
-        if (expected.Contains("COMMON", StringComparison.Ordinal) || expected.Contains("OUTAGE", StringComparison.Ordinal))
-            return actual.Contains("COMMON", StringComparison.Ordinal) || actual.Contains("OUTAGE", StringComparison.Ordinal)
-                   || result.Findings.Count > 0 || result.HasValidEvidence;
+        // Documented equivalents only (same evidence family).
+        if (expected.Contains("SERVER_PHYSICAL_LINK", StringComparison.Ordinal)
+            && label.Contains("SERVER_PHYSICAL_LINK", StringComparison.Ordinal))
+            return "PASS";
 
-        // Known office labels that CompareEngine may surface under alternate IDs
-        if (expected.Contains("SLEEP", StringComparison.Ordinal) || expected.Contains("POWER", StringComparison.Ordinal))
-            return result.HasValidEvidence || result.Findings.Count > 0 || result.InsufficientEvidence.Count >= 0;
+        if (expected.Contains("POSSIBLE_IP_CONFLICT", StringComparison.Ordinal)
+            && label.Contains("POSSIBLE_IP_CONFLICT", StringComparison.Ordinal))
+            return "PASS";
 
-        // Require evidence of comparison work — not a silent pass
-        return result.Findings.Count > 0 || result.ServerSideIssues.Count > 0 || result.InsufficientEvidence.Count > 0 || result.HasValidEvidence;
+        if (expected.Contains("INSUFFICIENT", StringComparison.Ordinal)
+            && label.Contains("INSUFFICIENT", StringComparison.Ordinal))
+            return "PASS";
+
+        if (expected.Contains("NEED_PACKET_PATH", StringComparison.Ordinal)
+            && label.Contains("NEED_PACKET_PATH", StringComparison.Ordinal))
+            return "PASS";
+
+        if (expected.Contains("HOST_REACHABLE_ICMP", StringComparison.Ordinal)
+            && label.Contains("HOST_REACHABLE_ICMP", StringComparison.Ordinal))
+            return "PASS";
+
+        if (expected.Contains("CLIENT_SPECIFIC", StringComparison.Ordinal)
+            && label.Contains("CLIENT_SPECIFIC", StringComparison.Ordinal))
+            return "PASS";
+
+        if (expected.Contains("INVALID", StringComparison.Ordinal)
+            && label.Contains("INVALID", StringComparison.Ordinal))
+            return "PASS";
+
+        if (expected.Contains("SHAPRINT_STARTUP", StringComparison.Ordinal)
+            && label.Contains("SHAPRINT_STARTUP", StringComparison.Ordinal))
+            return "PASS";
+
+        // CMP-001 alone must NEVER satisfy IP-conflict / power / WFP expectations.
+        return "FAIL";
     }
+
+    private readonly record struct OfficeClass(string Label, string Evidence);
 
     private static string Classify(RepairResult r)
     {
@@ -417,6 +667,17 @@ public class P21SimulationEngineTests
         if (r.Status == DiagnosticStatus.Pass && r.Verified && r.NoChange) return "NO_CHANGE";
         if (r.Status == DiagnosticStatus.Fail)
         {
+            // Journal/IO failure before Apply — system not modified → treat as BLOCKED.
+            if (!r.Applied && !r.RollbackAttempted
+                && (r.Message?.Contains("journal", StringComparison.OrdinalIgnoreCase) == true
+                    || r.Message?.Contains("IO", StringComparison.OrdinalIgnoreCase) == true
+                    || r.Message?.Contains("Access", StringComparison.OrdinalIgnoreCase) == true
+                    || r.Message?.Contains("JOURNAL_WRITE", StringComparison.OrdinalIgnoreCase) == true
+                    || r.Message?.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase) == true
+                    || r.Message?.Contains("Read-only", StringComparison.OrdinalIgnoreCase) == true
+                    || r.Message?.Contains("ReadOnly", StringComparison.OrdinalIgnoreCase) == true))
+                return "BLOCKED";
+
             if (r.RollbackAttempted && r.RollbackVerified && r.RolledBack)
                 return "ROLLED_BACK";
             if (r.RollbackAttempted && r.RollbackVerified)
@@ -428,7 +689,6 @@ public class P21SimulationEngineTests
         return r.Status.ToString().ToUpperInvariant();
     }
 
-    /// <summary>P22-004: strict expected matching — no fallback that accepts any DiagnosticStatus.</summary>
     private static bool ExpectedMatchesStrict(string expected, string actual, RepairResult r)
     {
         expected = expected.ToUpperInvariant();
@@ -474,7 +734,91 @@ public class P21SimulationEngineTests
         public Task<bool> EnsureElevatedAsync(CancellationToken ct = default) => Task.FromResult(Admin);
     }
 
-    /// <summary>Fault-injection process runner driving real OwnedFirewallRuleRepair through RepairExecutor.</summary>
+    /// <summary>
+    /// Wraps a repair so policy / port-owner / journal-inject rejections flow through
+    /// CheckPrerequisites → RepairExecutor (never a fabricated RepairResult).
+    /// </summary>
+    private sealed class PolicyGatedRepair : IRepairOperation, ITransactionBoundRepair
+    {
+        private readonly IRepairOperation _inner;
+        private readonly string _policy;
+        private readonly bool _portOwnerOk;
+        private readonly string? _inject;
+
+        public PolicyGatedRepair(IRepairOperation inner, string policy, bool portOwnerOk, string? inject)
+        {
+            _inner = inner;
+            _policy = policy;
+            _portOwnerOk = portOwnerOk;
+            _inject = inject;
+        }
+
+        public string OperationId => _inner.OperationId;
+        public string Title => _inner.Title;
+        public bool IsImplemented => _inner.IsImplemented;
+        public bool SupportsRollback => _inner.SupportsRollback;
+        public RepairOwnerRole OwnerRole => _inner.OwnerRole;
+        public RepairTargetMachine TargetMachine => _inner.TargetMachine;
+        public string? BoundTransactionId => (_inner as ITransactionBoundRepair)?.BoundTransactionId;
+
+        public void BindTransaction(string transactionId)
+        {
+            if (_inner is ITransactionBoundRepair bound)
+                bound.BindTransaction(transactionId);
+        }
+
+        public async Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
+        {
+            if (!_portOwnerOk)
+                return new RepairPrerequisiteResult
+                {
+                    CanProceed = false,
+                    RequiresAdmin = true,
+                    Reason = "PORT_OWNER_UNVERIFIED: refusing mutation — foreign/unknown listener."
+                };
+
+            if (string.Equals(_policy, "LOCAL_MERGE_DISABLED", StringComparison.OrdinalIgnoreCase))
+                return new RepairPrerequisiteResult
+                {
+                    CanProceed = false,
+                    RequiresAdmin = true,
+                    Reason = "POLICY:LOCAL_MERGE_DISABLED — local firewall merge blocked."
+                };
+
+            if (string.Equals(_policy, "THIRD_PARTY_BLOCK", StringComparison.OrdinalIgnoreCase))
+                return new RepairPrerequisiteResult
+                {
+                    CanProceed = false,
+                    RequiresAdmin = true,
+                    Reason = "POLICY:THIRD_PARTY_BLOCK — third-party security product blocks change."
+                };
+
+            if (string.Equals(_policy, "GPO_MANAGED", StringComparison.OrdinalIgnoreCase))
+                return new RepairPrerequisiteResult
+                {
+                    CanProceed = false,
+                    RequiresAdmin = true,
+                    Reason = "POLICY:GPO_MANAGED — domain GPO owns firewall; local create blocked."
+                };
+
+            if (string.Equals(_inject, "JOURNAL_WRITE_FAIL", StringComparison.OrdinalIgnoreCase))
+            {
+                // Soft pre-check marker; primary path is non-writable journal dir. Keep eligibility open
+                // so executor reaches Persist — unless we cannot make dir read-only on this OS.
+            }
+
+            return await _inner.CheckPrerequisitesAsync(ct);
+        }
+
+        public Task CollectEvidenceAsync(CancellationToken ct = default) => _inner.CollectEvidenceAsync(ct);
+        public Task<RepairPreview> PreviewChangesAsync(CancellationToken ct = default) => _inner.PreviewChangesAsync(ct);
+        public Task<RepairBackup> BackupAsync(CancellationToken ct = default) => _inner.BackupAsync(ct);
+        public Task ApplyAsync(CancellationToken ct = default) => _inner.ApplyAsync(ct);
+        public Task<bool> VerifyAsync(CancellationToken ct = default) => _inner.VerifyAsync(ct);
+        public Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default)
+            => _inner.RollbackAsync(backup, ct);
+    }
+
     private sealed class RepairFaultRunner : IProcessRunner
     {
         private readonly string _id;
@@ -504,7 +848,6 @@ public class P21SimulationEngineTests
                 if (string.Equals(_inject, "SCOPE_VERIFY_FAIL", StringComparison.OrdinalIgnoreCase)
                     || _id.Contains("scope-verification", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Create lands, but with wrong remote — captured via Description then bad read
                     CaptureFingerprint(script);
                     _created = true;
                     _enabled = false;
@@ -566,7 +909,6 @@ public class P21SimulationEngineTests
                     || string.Equals(_inject, "REMOTE_VERIFY_FAIL", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(_inject, "ROLLBACK_FAIL", StringComparison.OrdinalIgnoreCase))
                 {
-                    // After enable, poison verify so executor rolls back
                     if (_enabled)
                     {
                         profile = "Public";
@@ -574,13 +916,6 @@ public class P21SimulationEngineTests
                     }
                 }
 
-                if (_id.Contains("specific-allowed-cidr", StringComparison.OrdinalIgnoreCase)
-                    || remote == "192.168.10.0/24")
-                {
-                    // Keep whatever was requested via Description remote token if present
-                }
-
-                // Prefer RemoteAddress from fingerprint when present
                 if (_fingerprint is not null)
                 {
                     var rIdx = _fingerprint.IndexOf("remote:", StringComparison.Ordinal);

@@ -34,21 +34,30 @@ public class P22ShaPrintAndServiceOwnerTests
     [Fact]
     public void P22_007_ShaPrintStart_ResolveExe_RequiresPositiveIdentity()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "sha-" + Guid.NewGuid().ToString("N"));
+        // HF1: trusted test roots must be under an explicitly marked sha-*/ShaPrint path.
+        var root = Path.Combine(Path.GetTempPath(), "sha-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(root, "ShaPrint");
         Directory.CreateDirectory(dir);
         try
         {
             Assert.Null(ShaPrintStartRepair.ResolveVerifiedExecutable(dir));
             var exe = Path.Combine(dir, "ShaPrint.exe");
             File.WriteAllText(exe, "dummy");
-            Assert.Equal(exe, ShaPrintStartRepair.ResolveVerifiedExecutable(dir));
+            Assert.Equal(Path.GetFullPath(exe), ShaPrintStartRepair.ResolveVerifiedExecutable(dir));
             File.Delete(exe);
             File.WriteAllText(Path.Combine(dir, "notepad.exe"), "x");
             Assert.Null(ShaPrintStartRepair.ResolveVerifiedExecutable(dir));
+
+            // Filename alone in a user-writable unmarked temp dir is insufficient.
+            var unmarked = Path.Combine(Path.GetTempPath(), "user-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(unmarked);
+            File.WriteAllText(Path.Combine(unmarked, "ShaPrint.exe"), "x");
+            Assert.Null(ShaPrintStartRepair.ResolveVerifiedExecutable(unmarked));
+            try { Directory.Delete(unmarked, true); } catch { /* ignore */ }
         }
         finally
         {
-            try { Directory.Delete(dir, true); } catch { /* ignore */ }
+            try { Directory.Delete(root, true); } catch { /* ignore */ }
         }
     }
 

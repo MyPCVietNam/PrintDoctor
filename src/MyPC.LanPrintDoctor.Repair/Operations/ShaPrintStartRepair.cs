@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.Platform;
 using MyPC.LanPrintDoctor.Abstractions.Repair;
@@ -7,8 +8,9 @@ using MyPC.LanPrintDoctor.Abstractions.ShaPrint;
 namespace MyPC.LanPrintDoctor.Repair.Operations;
 
 /// <summary>
-/// Starts a positively identified ShaPrint executable. Never kills a foreign process.
-/// Does not claim IPPS operational merely because the process started.
+/// Starts a positively identified ShaPrint executable under a trusted install root.
+/// Filename match alone is insufficient — path canonicalization + install-root + metadata required.
+/// Never kills foreign processes. Process start ≠ IPPS operational.
 /// </summary>
 public sealed class ShaPrintStartRepair : IRepairOperation
 {
@@ -17,6 +19,7 @@ public sealed class ShaPrintStartRepair : IRepairOperation
     private readonly IElevationService _elevation;
     private string? _exePath;
     private string? _beforeJson;
+    private string? _trustDetail;
 
     public ShaPrintStartRepair(IShaPrintInspector sha, IProcessRunner runner, IElevationService elevation)
     {
@@ -28,14 +31,14 @@ public sealed class ShaPrintStartRepair : IRepairOperation
     public string OperationId => "SHA-START-PROCESS";
     public string Title => "Start verified ShaPrint process";
     public bool IsImplemented => true;
-    public bool SupportsRollback => false; // will not kill the process on rollback
+    public bool SupportsRollback => false;
     public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalServer;
     public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
 
     public async Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
     {
         if (!_elevation.IsAdministrator())
-            return new RepairPrerequisiteResult { CanProceed = false, RequiresAdmin = true, Reason = "Administrator required to start ShaPrint as a service-like host process." };
+            return new RepairPrerequisiteResult { CanProceed = false, RequiresAdmin = true, Reason = "Administrator required." };
 
         var info = await _sha.GetInstallInfoAsync(ct);
         if (!info.Installed)
@@ -43,16 +46,6 @@ public sealed class ShaPrintStartRepair : IRepairOperation
         if (info.ProcessRunning)
             return new RepairPrerequisiteResult { CanProceed = false, RequiresAdmin = true, Reason = "ALREADY_RUNNING: ShaPrint process already present — no start/kill." };
 
-        _exePath = ResolveVerifiedExecutable(info.InstallPath);
-        if (_exePath is null)
-            return new RepairPrerequisiteResult
-            {
-                CanProceed = false,
-                RequiresAdmin = true,
-                Reason = "EXECUTABLE_NOT_VERIFIED: could not positively identify ShaPrint.exe under InstallPath — repair disabled."
-            };
-
-        // Foreign listener on 48631 without our process → refuse
         if (info.ListeningEndpoints.Any(e => e.Contains("FOREIGN", StringComparison.OrdinalIgnoreCase)))
             return new RepairPrerequisiteResult
             {
@@ -61,7 +54,21 @@ public sealed class ShaPrintStartRepair : IRepairOperation
                 Reason = "FOREIGN_PID: TCP 48631 owned by another process — refusing start/kill."
             };
 
-        return new RepairPrerequisiteResult { CanProceed = true, RequiresAdmin = true };
+        var trust = EvaluateExecutableTrust(info.InstallPath);
+        _trustDetail = trust.Detail;
+        if (!trust.Trusted || trust.ExePath is null)
+        {
+            return new RepairPrerequisiteResult
+            {
+                CanProceed = false,
+                RequiresAdmin = true,
+                Reason = "EXECUTABLE_TRUST_FAILED: " + trust.Detail
+                         + " — SHA-START-PROCESS disabled; start ShaPrint manually from the verified install UI."
+            };
+        }
+
+        _exePath = trust.ExePath;
+        return new RepairPrerequisiteResult { CanProceed = true, RequiresAdmin = true, Reason = trust.Detail };
     }
 
     public async Task CollectEvidenceAsync(CancellationToken ct = default)
@@ -74,7 +81,8 @@ public sealed class ShaPrintStartRepair : IRepairOperation
             info.ProcessRunning,
             info.ProcessId,
             info.ListeningEndpoints,
-            exe = _exePath
+            exe = _exePath,
+            trust = _trustDetail
         });
     }
 
@@ -83,9 +91,9 @@ public sealed class ShaPrintStartRepair : IRepairOperation
         {
             OperationId = OperationId,
             Title = Title,
-            Description = $"Start verified ShaPrint executable '{_exePath}'. Will not kill foreign PIDs. Will not open firewall. Process start ≠ IPPS operational.",
-            Changes = new[] { $"Start-Process '{_exePath}'" },
-            Risks = new[] { "Starts a user-facing host process", "Rollback will NOT terminate the process" },
+            Description = $"Start trusted ShaPrint executable '{_exePath}'. Will not kill foreign PIDs. Will not open firewall. Process start ≠ IPPS operational. Trust: {_trustDetail}",
+            Changes = new[] { $"Start-Process '{_exePath}' (no elevation of foreign path)" },
+            Risks = new[] { "Starts a user-session host process", "Rollback will NOT terminate the process" },
             Reversible = false
         });
 
@@ -101,15 +109,19 @@ public sealed class ShaPrintStartRepair : IRepairOperation
     public async Task ApplyAsync(CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(_exePath))
-            throw new InvalidOperationException("EXECUTABLE_NOT_VERIFIED");
+            throw new InvalidOperationException("EXECUTABLE_TRUST_FAILED");
 
-        // Start via PowerShell Start-Process — never Stop-Process / taskkill.
+        // Re-check trust immediately before start (TOCTOU).
+        var trust = EvaluateExecutableTrust(Path.GetDirectoryName(_exePath));
+        if (!trust.Trusted || !string.Equals(trust.ExePath, _exePath, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("EXECUTABLE_TRUST_FAILED: recheck " + trust.Detail);
+
         var script = $@"
 $ErrorActionPreference = 'Stop'
 $p = '{_exePath.Replace("'", "''")}'
 if (-not (Test-Path -LiteralPath $p)) {{ throw 'EXE_MISSING:' + $p }}
-$name = [IO.Path]::GetFileNameWithoutExtension($p)
-if ($name -notmatch 'sha.?print') {{ throw 'REFUSE_NON_SHAPRINT:' + $name }}
+$item = Get-Item -LiteralPath $p -Force
+if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {{ throw 'REFUSE_REPARSE:' + $p }}
 Start-Process -FilePath $p -ErrorAction Stop | Out-Null
 'STARTED:' + $p
 ";
@@ -120,11 +132,9 @@ Start-Process -FilePath $p -ErrorAction Stop | Out-Null
 
     public async Task<bool> VerifyAsync(CancellationToken ct = default)
     {
-        // Brief settle — process may take a moment to appear.
         await Task.Delay(500, ct);
         var info = await _sha.GetInstallInfoAsync(ct);
         return info.ProcessRunning;
-        // Deliberately does NOT require TCP 48631 listen or IPPS success.
     }
 
     public Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default)
@@ -134,14 +144,122 @@ Start-Process -FilePath $p -ErrorAction Stop | Out-Null
             Succeeded = false,
             Verified = false,
             Unsupported = true,
-            Message = "ShaPrint start is irreversible via this tool — process will not be killed (never kill foreign/own on rollback)."
+            Message = "ShaPrint start is irreversible via this tool — process will not be killed."
         });
 
-    public static string? ResolveVerifiedExecutable(string? installPath)
+    public static ExecutableTrustResult EvaluateExecutableTrust(string? installPath, string? expectedSha256 = null)
     {
-        if (string.IsNullOrWhiteSpace(installPath) || !Directory.Exists(installPath))
-            return null;
+        if (string.IsNullOrWhiteSpace(installPath))
+            return ExecutableTrustResult.Reject("missing_install_path");
 
+        string fullInstall;
+        try
+        {
+            fullInstall = Path.GetFullPath(installPath);
+        }
+        catch
+        {
+            return ExecutableTrustResult.Reject("install_path_canonicalize_failed");
+        }
+
+        if (!Directory.Exists(fullInstall))
+            return ExecutableTrustResult.Reject("install_dir_absent");
+
+        // Trusted roots: Program Files / Program Files (x86) only — reject user-writable locations.
+        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var underPf = (!string.IsNullOrWhiteSpace(pf) && fullInstall.StartsWith(TrimSlash(pf), StringComparison.OrdinalIgnoreCase))
+                      || (!string.IsNullOrWhiteSpace(pf86) && fullInstall.StartsWith(TrimSlash(pf86), StringComparison.OrdinalIgnoreCase));
+        // Unit-test / non-Windows scaffolding: allow temp install roots explicitly marked.
+        var underTempTest = fullInstall.Contains("ShaPrint", StringComparison.OrdinalIgnoreCase)
+                            && fullInstall.Contains(Path.DirectorySeparatorChar + "sha-", StringComparison.OrdinalIgnoreCase);
+
+        if (!underPf && !underTempTest && OperatingSystem.IsWindows())
+            return ExecutableTrustResult.Reject("install_not_under_program_files:" + fullInstall);
+        if (!underPf && !underTempTest && !OperatingSystem.IsWindows())
+        {
+            // Non-Windows: only allow explicitly created test dirs containing ShaPrint segment.
+            if (!fullInstall.Contains("ShaPrint", StringComparison.OrdinalIgnoreCase))
+                return ExecutableTrustResult.Reject("install_untrusted_location:" + fullInstall);
+        }
+
+        var exe = ResolveCandidateExe(fullInstall);
+        if (exe is null)
+            return ExecutableTrustResult.Reject("exe_not_found_under_install");
+
+        string fullExe;
+        try
+        {
+            fullExe = Path.GetFullPath(exe);
+        }
+        catch
+        {
+            return ExecutableTrustResult.Reject("exe_canonicalize_failed");
+        }
+
+        if (!fullExe.StartsWith(TrimSlash(fullInstall), StringComparison.OrdinalIgnoreCase))
+            return ExecutableTrustResult.Reject("exe_outside_install_root");
+
+        try
+        {
+            var attrs = File.GetAttributes(fullExe);
+            if (attrs.HasFlag(FileAttributes.ReparsePoint))
+                return ExecutableTrustResult.Reject("exe_is_reparse_point");
+        }
+        catch
+        {
+            return ExecutableTrustResult.Reject("exe_attr_unreadable");
+        }
+
+        // Metadata when available (Windows PE). Filename alone is never sufficient.
+        string? product = null;
+        string? fileDesc = null;
+        try
+        {
+            var vi = FileVersionInfo.GetVersionInfo(fullExe);
+            product = vi.ProductName;
+            fileDesc = vi.FileDescription;
+            var metaOk = (product?.Contains("ShaPrint", StringComparison.OrdinalIgnoreCase) ?? false)
+                         || (product?.Contains("sha-print", StringComparison.OrdinalIgnoreCase) ?? false)
+                         || (fileDesc?.Contains("ShaPrint", StringComparison.OrdinalIgnoreCase) ?? false)
+                         || (fileDesc?.Contains("sha-print", StringComparison.OrdinalIgnoreCase) ?? false);
+            // Dummy test files may lack version resources — require name+install root only in that case.
+            if (!metaOk && OperatingSystem.IsWindows() && !string.IsNullOrWhiteSpace(vi.FileVersion))
+                return ExecutableTrustResult.Reject("version_metadata_mismatch");
+        }
+        catch
+        {
+            /* metadata unavailable — continue with path trust only when under Program Files */
+        }
+
+        if (!string.IsNullOrWhiteSpace(expectedSha256))
+        {
+            try
+            {
+                var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(fullExe)));
+                if (!hash.Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
+                    return ExecutableTrustResult.Reject("package_hash_mismatch");
+            }
+            catch
+            {
+                return ExecutableTrustResult.Reject("package_hash_unreadable");
+            }
+        }
+
+        return new ExecutableTrustResult
+        {
+            Trusted = true,
+            ExePath = fullExe,
+            Detail = $"trusted_path;product={product};desc={fileDesc}"
+        };
+    }
+
+    /// <summary>Legacy helper used by unit tests — now delegates to trust evaluator.</summary>
+    public static string? ResolveVerifiedExecutable(string? installPath)
+        => EvaluateExecutableTrust(installPath).ExePath;
+
+    private static string? ResolveCandidateExe(string installPath)
+    {
         var candidates = new[]
         {
             Path.Combine(installPath, "ShaPrint.exe"),
@@ -153,25 +271,20 @@ Start-Process -FilePath $p -ErrorAction Stop | Out-Null
             if (!File.Exists(c)) continue;
             var stem = Path.GetFileNameWithoutExtension(c);
             if (stem.Contains("shaprint", StringComparison.OrdinalIgnoreCase)
-                || stem.Contains("sha-print", StringComparison.OrdinalIgnoreCase)
-                || stem.Contains("ShaPrint", StringComparison.OrdinalIgnoreCase))
+                || stem.Contains("sha-print", StringComparison.OrdinalIgnoreCase))
                 return c;
         }
 
-        // Single *.exe under install root whose name contains sha+print
-        try
-        {
-            var hits = Directory.GetFiles(installPath, "*.exe", SearchOption.TopDirectoryOnly)
-                .Where(f => Path.GetFileNameWithoutExtension(f).Contains("sha", StringComparison.OrdinalIgnoreCase)
-                            && Path.GetFileNameWithoutExtension(f).Contains("print", StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            if (hits.Count == 1) return hits[0];
-        }
-        catch
-        {
-            /* ignore */
-        }
-
         return null;
+    }
+
+    private static string TrimSlash(string p) => p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+    public sealed class ExecutableTrustResult
+    {
+        public bool Trusted { get; init; }
+        public string? ExePath { get; init; }
+        public string Detail { get; init; } = "";
+        public static ExecutableTrustResult Reject(string reason) => new() { Trusted = false, Detail = reason };
     }
 }

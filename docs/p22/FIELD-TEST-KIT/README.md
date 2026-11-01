@@ -1,11 +1,19 @@
-# Field Test Kit — v1.2.2-RC3
+# Field Test Kit — v1.2.2-HF1
 
-1. Install Windows RELEASE ZIP from CI artifacts (multi-file self-contained).
-2. On **server**: run `MyPC.LanPrintDoctor.exe` → Server → SCAN → Export BEFORE.
-3. On **one client**: Client mode → server IPv4 → SCAN → Export BEFORE.
-4. Compare reports in-app.
-5. Apply at most one eligible repair with consent; expect LOCAL_CONFIG_VERIFIED only.
-6. See `docs/FIELD-TEST-CHECKLIST-P22.md` for full checklist and disabled ops.
-7. Read-only fallback: SCAN + Export without Safe Repair.
+**FIELD_READY: false.** Use Windows CI RELEASE ZIP only.
 
-Rollback: journal under `%ProgramData%\MyPC\LanPrintDoctor` / session journals; unfinished transactions block further Apply until technician review.
+## Bundle
+- `FIELD-TEST-CHECKLIST-HF1.md` — 12-step two-PC then remaining clients
+- `OPERATION-GATING-HF1.md` — per-operation enablement
+- This README
+
+## Workflow
+1. Server read-only scan → `SERVER-BEFORE.zip`
+2. First client read-only scan → `CLIENT-BEFORE.zip`
+3. Compare → best-supported cause
+4. At most one consented eligible repair (skip if switch/VLAN/routing/IP-conflict)
+5. Journal + snapshot → local verify → client re-probe → AFTER zips → physical print ask
+6. Only then remaining clients
+
+Rollback / unfinished txs: `%ProgramData%\MyPC\LanPrintDoctor` — further Apply blocked until review.
+Machine lock: `Global\MyPC.LanPrintDoctor.MachineRepair` (fail closed).

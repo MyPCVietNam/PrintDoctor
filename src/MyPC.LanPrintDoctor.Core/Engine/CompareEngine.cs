@@ -31,10 +31,33 @@ public sealed class CompareEngine
             };
         }
 
+        var serverNicDown = server.Adapters.Count > 0 && server.Adapters.All(a => !a.IsUp);
+        if (serverNicDown)
+        {
+            serverIssues.Add("SERVER_PHYSICAL_LINK: server adapter reported down");
+            findings.Add(new Finding
+            {
+                Id = "CMP-000",
+                Title = "Server physical link down",
+                Severity = Severity.Critical,
+                Status = DiagnosticStatus.Fail,
+                Evidence = "All server adapters IsUp=false",
+                Confidence = 0.9,
+                Category = "Correlation",
+                PossibleCauses = new[] { "NIC unplugged", "Adapter disabled", "Driver failure" },
+                RecommendedActions = new[] { "Check cable/link lights", "Enable adapter", "Do not apply firewall repairs for link-down" },
+                VerificationMethod = "Server console adapter status"
+            });
+        }
+
         var serverIp = server.Adapters.FirstOrDefault(a => a.IsUp && a.IPv4Addresses.Count > 0)?.IPv4Addresses.FirstOrDefault()
+                       ?? server.Adapters.FirstOrDefault(a => a.IPv4Addresses.Count > 0)?.IPv4Addresses.FirstOrDefault()
                        ?? server.TargetHost;
-        var serverMac = server.Adapters.FirstOrDefault(a => a.IsUp && !string.IsNullOrWhiteSpace(a.MacAddress))?.MacAddress;
-        var serverGw = server.Adapters.FirstOrDefault(a => a.IsUp)?.DefaultGateway;
+        // Prefer up-adapter MAC; fall back to any reported MAC (needed when link is down but identity known).
+        var serverMac = server.Adapters.FirstOrDefault(a => a.IsUp && !string.IsNullOrWhiteSpace(a.MacAddress))?.MacAddress
+                        ?? server.Adapters.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.MacAddress))?.MacAddress;
+        var serverGw = server.Adapters.FirstOrDefault(a => a.IsUp)?.DefaultGateway
+                       ?? server.Adapters.FirstOrDefault()?.DefaultGateway;
 
         // Require non-empty probe sets before using .All() — empty.All() is true in LINQ and caused false CMP-001.
         static bool AllFailIcmpTo(DiagnosticSnapshot c, string? ip)
@@ -154,6 +177,74 @@ public sealed class CompareEngine
             server.Services.Any(s => s.Name.Equals("LanmanServer", StringComparison.OrdinalIgnoreCase) && s.Status.Equals("Running", StringComparison.OrdinalIgnoreCase)))
         {
             infra.Add("Server services look up while all clients unreachable — suspect switch/AP isolation or L2 path (not repairable from Windows alone).");
+        }
+
+        // Mixed / inconsistent client target hosts — do not treat as a single common outage.
+        var distinctTargets = clients
+            .Select(c => c.TargetHost)
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (distinctTargets.Count > 1)
+        {
+            insufficient.Add("INVALID_OR_INCONSISTENT_REPORTS: clients target different hosts — "
+                             + string.Join(",", distinctTargets));
+            // Strip common-outage claim when targets disagree.
+            findings.RemoveAll(f => f.Id == "CMP-001");
+            serverIssues.RemoveAll(s => s.Contains("All clients fail", StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Client-specific: at least one client fully reachable while another fails TCP/ICMP to same server.
+        var anyFullyReachable = clients.Any(c =>
+            c.Probes.Any(p => p.Protocol == ProbeProtocol.Icmp && p.Outcome == ProbeOutcome.Pass
+                              && string.Equals(p.Target, serverIp, StringComparison.OrdinalIgnoreCase))
+            && c.Probes.Any(p => p.Protocol == ProbeProtocol.Tcp && p.Port == 445 && p.Outcome == ProbeOutcome.Pass
+                                 && string.Equals(p.Target, serverIp, StringComparison.OrdinalIgnoreCase)));
+        var anyClientFail = clients.Any(c => AllFailIcmpTo(c, serverIp) || AllFailTcpTo(c, serverIp)
+            || c.Probes.Any(p => p.Protocol == ProbeProtocol.Tcp && p.Port == 445 && p.Outcome == ProbeOutcome.Fail
+                                 && string.Equals(p.Target, serverIp, StringComparison.OrdinalIgnoreCase)));
+        if (anyFullyReachable && anyClientFail && distinctTargets.Count <= 1)
+        {
+            clientIssues.Add("CLIENT_SPECIFIC_FAULT: mixed reachability across clients to the same server");
+            if (!findings.Any(f => f.Id == "CMP-005"))
+            {
+                findings.Add(new Finding
+                {
+                    Id = "CMP-005",
+                    Title = "Client-specific fault",
+                    Severity = Severity.High,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = "At least one client reaches server while another fails",
+                    Confidence = 0.7,
+                    Category = "Correlation",
+                    PossibleCauses = new[] { "Client firewall", "Client routing", "Client SMB stack" },
+                    RecommendedActions = new[] { "Compare failing client only", "Do not apply server-wide speculative repairs" },
+                    VerificationMethod = "Re-probe failing client after local check"
+                });
+            }
+        }
+
+        // ICMP filtered while TCP works — host reachable; ICMP is a separate control plane.
+        var allIcmpFailTcpPass = clients.Count > 0
+            && clients.All(c => AllFailIcmpTo(c, serverIp)
+                                && c.Probes.Any(p => p.Protocol == ProbeProtocol.Tcp && p.Port == 445
+                                                     && p.Outcome == ProbeOutcome.Pass
+                                                     && string.Equals(p.Target, serverIp, StringComparison.OrdinalIgnoreCase)));
+        if (allIcmpFailTcpPass)
+        {
+            findings.Add(new Finding
+            {
+                Id = "CMP-004",
+                Title = "Host reachable; ICMP filtered separately",
+                Severity = Severity.Medium,
+                Status = DiagnosticStatus.Warning,
+                Evidence = "All clients: ICMP fail + TCP 445 pass to server",
+                Confidence = 0.85,
+                Category = "Correlation",
+                PossibleCauses = new[] { "ICMP echo blocked", "Firewall ICMP rule missing" },
+                RecommendedActions = new[] { "Treat TCP success as reachability", "Optional owned ICMP allow on Private/LocalSubnet" },
+                VerificationMethod = "TCP 445 / SMB probe"
+            });
         }
 
         var hasValid = findings.Count > 0 || serverIssues.Count > 0 || infra.Count > 0 || clientIssues.Count > 0;

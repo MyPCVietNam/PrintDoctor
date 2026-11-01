@@ -3,27 +3,32 @@
     "id": "OFFICE-01",
     "expected": "SERVER_PHYSICAL_LINK",
     "actual": "SERVER_PHYSICAL_LINK",
+    "evidence": "findings=CMP-000,CMP-001; serverIssues=SERVER_PHYSICAL_LINK: server adapter reported down|All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation.; insufficient=PC1: insufficient MAC evidence for conflict analysis|PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis",
     "verdict": "PASS",
     "serverIp": "192.168.10.50",
     "nicDown": true,
     "findings": [
+      "CMP-000",
       "CMP-001"
     ],
     "serverIssues": [
+      "SERVER_PHYSICAL_LINK: server adapter reported down",
       "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
     ],
+    "clientIssues": [],
     "insufficient": [
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC1: insufficient MAC evidence for conflict analysis",
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis"
     ]
   },
   {
     "id": "OFFICE-02",
     "expected": "SERVER_POWER",
-    "actual": "SERVER_POWER",
-    "verdict": "PASS",
+    "actual": "BLOCKED:NO_POWER_STATE_MODEL",
+    "evidence": "findings=CMP-001; serverIssues=All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation.; insufficient=PC1: insufficient MAC evidence for conflict analysis|PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis; power_token=SLEEP",
+    "verdict": "BLOCKED",
     "serverIp": "192.168.10.50",
     "nicDown": false,
     "findings": [
@@ -32,38 +37,42 @@
     "serverIssues": [
       "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
     ],
+    "clientIssues": [],
     "insufficient": [
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC1: insufficient MAC evidence for conflict analysis",
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis"
     ]
   },
   {
     "id": "OFFICE-03",
     "expected": "POSSIBLE_IP_CONFLICT_NEEDS_CORROBORATION",
-    "actual": "CMP-001",
+    "actual": "POSSIBLE_IP_CONFLICT_NEEDS_CORROBORATION",
+    "evidence": "findings=CMP-001,CMP-003; serverIssues=All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation.; insufficient=PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis",
     "verdict": "PASS",
     "serverIp": "192.168.10.50",
     "nicDown": false,
     "findings": [
-      "CMP-001"
+      "CMP-001",
+      "CMP-003"
     ],
     "serverIssues": [
       "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
     ],
+    "clientIssues": [],
     "insufficient": [
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis"
     ]
   },
   {
     "id": "OFFICE-04",
     "expected": "UPSTREAM_NETWORK_PATH",
-    "actual": "CMP-001",
-    "verdict": "PASS",
+    "actual": "BLOCKED:NO_PACKET_ARRIVAL_MODEL",
+    "evidence": "findings=CMP-001; serverIssues=All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation.; insufficient=PC1: insufficient MAC evidence for conflict analysis|PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis; received_probe=NO",
+    "verdict": "BLOCKED",
     "serverIp": "192.168.10.50",
     "nicDown": false,
     "findings": [
@@ -72,35 +81,41 @@
     "serverIssues": [
       "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
     ],
+    "clientIssues": [],
     "insufficient": [
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC1: insufficient MAC evidence for conflict analysis",
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis"
     ]
   },
   {
     "id": "OFFICE-05",
     "expected": "HOST_REACHABLE_ICMP_SEPARATE",
-    "actual": "INSUFFICIENT_EVIDENCE",
+    "actual": "HOST_REACHABLE_ICMP_SEPARATE",
+    "evidence": "findings=CMP-004; insufficient=Insufficient TCP probes targeting server IP for common-outage analysis.|PC1: insufficient MAC evidence for conflict analysis|PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis",
     "verdict": "PASS",
     "serverIp": "192.168.10.50",
     "nicDown": false,
-    "findings": [],
+    "findings": [
+      "CMP-004"
+    ],
     "serverIssues": [],
+    "clientIssues": [],
     "insufficient": [
       "Insufficient TCP probes targeting server IP for common-outage analysis.",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC1: insufficient MAC evidence for conflict analysis",
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis"
     ]
   },
   {
     "id": "OFFICE-06",
     "expected": "SERVER_WFP_FIREWALL_CONFIRMED",
-    "actual": "CMP-001",
-    "verdict": "PASS",
+    "actual": "BLOCKED:NO_WFP_MODEL",
+    "evidence": "findings=CMP-001; serverIssues=All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation.; insufficient=PC1: insufficient MAC evidence for conflict analysis|PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis; wfp_drop=YES",
+    "verdict": "BLOCKED",
     "serverIp": "192.168.10.50",
     "nicDown": false,
     "findings": [
@@ -109,17 +124,19 @@
     "serverIssues": [
       "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
     ],
+    "clientIssues": [],
     "insufficient": [
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC1: insufficient MAC evidence for conflict analysis",
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis"
     ]
   },
   {
     "id": "OFFICE-07",
     "expected": "NEED_PACKET_PATH_OR_FIREWALL_EVIDENCE",
-    "actual": "CMP-001",
+    "actual": "NEED_PACKET_PATH_OR_FIREWALL_EVIDENCE",
+    "evidence": "findings=CMP-001; serverIssues=All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation.; insufficient=PC1: insufficient MAC evidence for conflict analysis|PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis",
     "verdict": "PASS",
     "serverIp": "192.168.10.50",
     "nicDown": false,
@@ -129,98 +146,114 @@
     "serverIssues": [
       "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
     ],
+    "clientIssues": [],
     "insufficient": [
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC1: insufficient MAC evidence for conflict analysis",
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis"
     ]
   },
   {
     "id": "OFFICE-08",
     "expected": "CLIENT_SPECIFIC_FAULT",
-    "actual": "INSUFFICIENT_EVIDENCE",
+    "actual": "CLIENT_SPECIFIC_FAULT",
+    "evidence": "findings=CMP-005; clientIssues=CLIENT_SPECIFIC_FAULT: mixed reachability across clients to the same server; insufficient=Insufficient ICMP probes targeting server IP for common-outage analysis.|PC1: insufficient MAC evidence for conflict analysis|PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis",
     "verdict": "PASS",
     "serverIp": "192.168.10.50",
     "nicDown": false,
-    "findings": [],
+    "findings": [
+      "CMP-005"
+    ],
     "serverIssues": [],
+    "clientIssues": [
+      "CLIENT_SPECIFIC_FAULT: mixed reachability across clients to the same server"
+    ],
     "insufficient": [
       "Insufficient ICMP probes targeting server IP for common-outage analysis.",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC1: insufficient MAC evidence for conflict analysis",
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis"
     ]
   },
   {
     "id": "OFFICE-09",
     "expected": "PRINT_RPC_APPLICATION_LAYER",
-    "actual": "INSUFFICIENT_EVIDENCE",
-    "verdict": "PASS",
+    "actual": "BLOCKED:NO_PRINTER_RPC_MODEL",
+    "evidence": "findings=; insufficient=Insufficient ICMP probes targeting server IP for common-outage analysis.|Insufficient TCP probes targeting server IP for common-outage analysis.|PC1: insufficient MAC evidence for conflict analysis|PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis",
+    "verdict": "BLOCKED",
     "serverIp": "192.168.10.50",
     "nicDown": false,
     "findings": [],
     "serverIssues": [],
+    "clientIssues": [],
     "insufficient": [
       "Insufficient ICMP probes targeting server IP for common-outage analysis.",
       "Insufficient TCP probes targeting server IP for common-outage analysis.",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC1: insufficient MAC evidence for conflict analysis",
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis"
     ]
   },
   {
     "id": "OFFICE-10",
     "expected": "SHAPRINT_STARTUP_RECURRENCE",
-    "actual": "INSUFFICIENT_EVIDENCE",
+    "actual": "SHAPRINT_STARTUP_RECURRENCE",
+    "evidence": "findings=; insufficient=Insufficient ICMP probes targeting server IP for common-outage analysis.|Insufficient TCP probes targeting server IP for common-outage analysis.|PC1: insufficient MAC evidence for conflict analysis|PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis; sha=STOPPED tcp445=PASS tcp48631=FAIL",
     "verdict": "PASS",
     "serverIp": "192.168.10.50",
     "nicDown": false,
     "findings": [],
     "serverIssues": [],
+    "clientIssues": [],
     "insufficient": [
       "Insufficient ICMP probes targeting server IP for common-outage analysis.",
       "Insufficient TCP probes targeting server IP for common-outage analysis.",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC1: insufficient MAC evidence for conflict analysis",
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis"
     ]
   },
   {
     "id": "OFFICE-11",
     "expected": "INVALID_OR_INCONSISTENT_REPORTS",
-    "actual": "INSUFFICIENT_EVIDENCE",
+    "actual": "INVALID_OR_INCONSISTENT_REPORTS",
+    "evidence": "findings=; insufficient=PC1: insufficient MAC evidence for conflict analysis|PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis|INVALID_OR_INCONSISTENT_REPORTS: clients target different hosts \u2014 192.168.10.50,192.168.10.60",
     "verdict": "PASS",
     "serverIp": "192.168.10.50",
     "nicDown": false,
     "findings": [],
     "serverIssues": [],
+    "clientIssues": [],
     "insufficient": [
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC1: insufficient MAC evidence for conflict analysis",
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis",
+      "INVALID_OR_INCONSISTENT_REPORTS: clients target different hosts \u2014 192.168.10.50,192.168.10.60"
     ]
   },
   {
     "id": "OFFICE-12",
     "expected": "INSUFFICIENT_EVIDENCE",
     "actual": "INSUFFICIENT_EVIDENCE",
+    "evidence": "findings=; insufficient=Insufficient ICMP probes targeting server IP for common-outage analysis.|Insufficient TCP probes targeting server IP for common-outage analysis.|PC1: insufficient MAC evidence for conflict analysis|PC2: insufficient MAC evidence for conflict analysis|PC3: insufficient MAC evidence for conflict analysis|PC4: insufficient MAC evidence for conflict analysis",
     "verdict": "PASS",
     "serverIp": "192.168.10.50",
     "nicDown": false,
     "findings": [],
     "serverIssues": [],
+    "clientIssues": [],
     "insufficient": [
       "Insufficient ICMP probes targeting server IP for common-outage analysis.",
       "Insufficient TCP probes targeting server IP for common-outage analysis.",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis",
-      "cursor: insufficient MAC evidence for conflict analysis"
+      "PC1: insufficient MAC evidence for conflict analysis",
+      "PC2: insufficient MAC evidence for conflict analysis",
+      "PC3: insufficient MAC evidence for conflict analysis",
+      "PC4: insufficient MAC evidence for conflict analysis"
     ]
   }
 ]

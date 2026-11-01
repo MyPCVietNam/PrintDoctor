@@ -153,8 +153,25 @@ public sealed class RepairExecutor
             };
         }
 
-        var prereq = await operation.CheckPrerequisitesAsync(ct);
-        _journal.Record(tx, operation.OperationId, "Prerequisites", prereq.CanProceed, prereq.Reason);
+        RepairPrerequisiteResult prereq;
+        try
+        {
+            prereq = await operation.CheckPrerequisitesAsync(ct);
+            _journal.Record(tx, operation.OperationId, "Prerequisites", prereq.CanProceed, prereq.Reason);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or InvalidOperationException)
+        {
+            return new RepairResult
+            {
+                OperationId = operation.OperationId,
+                TransactionId = tx,
+                Applied = false,
+                Verified = false,
+                Status = DiagnosticStatus.Blocked,
+                Message = "JOURNAL_WRITE_FAIL: " + ex.Message
+            };
+        }
+
         if (prereq.NotImplemented || !operation.IsImplemented)
         {
             return new RepairResult
