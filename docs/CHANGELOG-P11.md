@@ -15,5 +15,9 @@
 - Service start repairs (Spooler/Lanman*) already present from P1.1.
 - Advanced pktmon/WFP and recurrence baselines: P3 — not blocking RC1 P0/P1 gate.
 
+## CI
+- WINDOWS_CI_PASS @ `824f292` — https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41321543958
+- Unit 111 / Integration 10 PASS on windows-latest
+
 ## Non-claims
 `FIELD_VALIDATION_PENDING`. Win10/11 physical lab **NOT_RUN**. Not FIELD/PRODUCTION READY.
