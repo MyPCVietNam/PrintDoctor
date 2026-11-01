@@ -1,0 +1,338 @@
+[
+  {
+    "ScenarioId": "LAN-01",
+    "expected": "SERVER_LINK_DOWN",
+    "actual": "LAN-000,LAN-001,SMB-001,PRN-002,RC-NO-ADAPTER,RC-CASE-A",
+    "verdict": "PASS",
+    "Detail": "findings=4; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-02",
+    "expected": "SERVER_POWER_OR_SLEEP",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-03",
+    "expected": "SERVER_GATEWAY_FAIL",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-04",
+    "expected": "IP_CONFLICT_SUSPECT",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-05",
+    "expected": "VPN_ROUTE_WRONG",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-06",
+    "expected": "ROUTING_OR_VLAN",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-07",
+    "expected": "PACKETS_NOT_AT_SERVER",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "BLOCKED",
+    "Detail": "UNMAPPABLE_WITNESS: WFP/pktmon/ARP fixtures not fully represented in DiagnosticSnapshot \u2014 engine ran safely without auto-repair"
+  },
+  {
+    "ScenarioId": "LAN-08",
+    "expected": "L2_PATH_SUSPECT",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "BLOCKED",
+    "Detail": "UNMAPPABLE_WITNESS: WFP/pktmon/ARP fixtures not fully represented in DiagnosticSnapshot \u2014 engine ran safely without auto-repair"
+  },
+  {
+    "ScenarioId": "LAN-09",
+    "expected": "FIREWALL_DROP_CONFIRMED",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "BLOCKED",
+    "Detail": "UNMAPPABLE_WITNESS: WFP/pktmon/ARP fixtures not fully represented in DiagnosticSnapshot \u2014 engine ran safely without auto-repair"
+  },
+  {
+    "ScenarioId": "LAN-10",
+    "expected": "SERVER_PUBLIC_PROFILE",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-11",
+    "expected": "GPO_FIREWALL_OVERRIDE",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-12",
+    "expected": "THIRD_PARTY_FIREWALL",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-13",
+    "expected": "SMB_SERVER_BINDING_DISABLED",
+    "actual": "SMB-001,PRN-002",
+    "verdict": "PASS",
+    "Detail": "findings=2; roots=0; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-14",
+    "expected": "SMB_SERVER_SERVICE_STOPPED",
+    "actual": "SMB-002,SMB-001,PRN-002",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=0; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "SHA-15",
+    "expected": "SHAPRINT_PROCESS_STOPPED",
+    "actual": "LAN-001U,SMB-004A,PRN-002,SHA-004,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=4; roots=2; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "SHA-16",
+    "expected": "SHAPRINT_FOREIGN_PORT",
+    "actual": "LAN-001U,SMB-004A,PRN-002,SHA-004,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=4; roots=2; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "SHA-17",
+    "expected": "SHAPRINT_STARTUP_FAIL",
+    "actual": "LAN-001U,PRN-002,SHA-004,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=1; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "SHA-18",
+    "expected": "SHAPRINT_TLS_FAIL",
+    "actual": "LAN-001U,PRN-002,SHA-004,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "SHA-19",
+    "expected": "SHAPRINT_CLIENT_PROXY_FAIL",
+    "actual": "LAN-001U,PRN-002,SHA-004,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "SHA-20",
+    "expected": "SHAPRINT_DISCOVERY_FAIL",
+    "actual": "LAN-001U,PRN-002,SHA-004,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "PRN-21",
+    "expected": "SPOOLER_STOPPED",
+    "actual": "LAN-001U,PRN-001,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=4; roots=2; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "PRN-22",
+    "expected": "PRINTER_USB_UNPLUGGED",
+    "actual": "LAN-001U,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "PRN-23",
+    "expected": "PRINTER_OFFLINE",
+    "actual": "LAN-001U,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "PRN-24",
+    "expected": "PRINTER_PAUSED",
+    "actual": "LAN-001U,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "PRN-25",
+    "expected": "PRINTER_SHARE_DISABLED",
+    "actual": "LAN-001U,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "SMB-26",
+    "expected": "SMB_AUTH_DENIED",
+    "actual": "LAN-002,SMB-004A,PRN-002,RC-CASE-B,RC-CASE-C",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "SMB-27",
+    "expected": "SMB_SIGNING_INCOMPAT",
+    "actual": "LAN-001U,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "SMB-28",
+    "expected": "SMB_SHARE_NOT_FOUND",
+    "actual": "LAN-001U,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "RPC-29",
+    "expected": "RPC_ENDPOINT_FAIL",
+    "actual": "LAN-001U,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "RPC-30",
+    "expected": "RPC_DYNAMIC_FAIL",
+    "actual": "LAN-001U,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "PRN-31",
+    "expected": "PRINTER_DRIVER_POLICY",
+    "actual": "LAN-001U,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "PRN-32",
+    "expected": "LOCAL_PRINT_FAIL",
+    "actual": "LAN-001U,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "PRN-33",
+    "expected": "PHYSICAL_PRINT_NOT_VERIFIED",
+    "actual": "LAN-001U,PRN-002,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=2; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-34",
+    "expected": "DNS_RESOLUTION_FAIL",
+    "actual": "SMB-004A,PRN-002,RC-CASE-C",
+    "verdict": "PASS",
+    "Detail": "findings=2; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-35",
+    "expected": "ICMP_ONLY_FILTERED",
+    "actual": "LAN-002,SMB-004A,PRN-002,RC-CASE-B,RC-CASE-C",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-36",
+    "expected": "SERVER_AND_INFRA_UNKNOWN",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-37",
+    "expected": "NETWORK_UNSTABLE",
+    "actual": "LAN-001U,PRN-002,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=2; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-38",
+    "expected": "INSUFFICIENT_EVIDENCE",
+    "actual": "LAN-001U,PRN-002,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=2; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "TX-39",
+    "expected": "JOURNAL_BLOCK",
+    "actual": "LAN-001U,SMB-001,PRN-002,RC-UNKNOWN-PROBES",
+    "verdict": "BLOCKED",
+    "Detail": "Journal fixtures require live RepairJournal state \u2014 exercised in fault-injection suite"
+  },
+  {
+    "ScenarioId": "TX-40",
+    "expected": "JOURNAL_BLOCK",
+    "actual": "LAN-001U,SMB-001,PRN-002,RC-UNKNOWN-PROBES",
+    "verdict": "BLOCKED",
+    "Detail": "Journal fixtures require live RepairJournal state \u2014 exercised in fault-injection suite"
+  },
+  {
+    "ScenarioId": "LAN-41",
+    "expected": "SMB_PORT_FAIL",
+    "actual": "LAN-002,SMB-001,PRN-002,RC-CASE-B,RC-CASE-C",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-42",
+    "expected": "INSUFFICIENT_EVIDENCE",
+    "actual": "LAN-001U,PRN-002,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=2; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-43",
+    "expected": "ICMP_ONLY_FILTERED",
+    "actual": "LAN-002,PRN-002,RC-CASE-B,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=2; roots=3; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-44",
+    "expected": "IP_CONFLICT_SUSPECT",
+    "actual": "LAN-001P,PRN-002,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=2; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "LAN-45",
+    "expected": "THIRD_PARTY_FIREWALL",
+    "actual": "LAN-001,SMB-001,PRN-002,RC-CASE-A",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "PRN-46",
+    "expected": "SMB_AUTH_DENIED",
+    "actual": "LAN-001U,SMB-004A,PRN-002,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "SHA-47",
+    "expected": "SHAPRINT_CLIENT_PROXY_FAIL",
+    "actual": "LAN-001U,PRN-002,SHA-004,RC-CASE-C,RC-UNKNOWN-PROBES",
+    "verdict": "PASS",
+    "Detail": "findings=3; roots=2; suggestedRepair=True; autoApplyForbidden=True; role=Server"
+  },
+  {
+    "ScenarioId": "RPC-48",
+    "expected": "RPC_DYNAMIC_FAIL",
+    "actual": "SMB-004A,PRN-002,RC-CASE-C",
+    "verdict": "PASS",
+    "Detail": "findings=2; roots=1; suggestedRepair=False; autoApplyForbidden=True; role=Server"
+  }
+]

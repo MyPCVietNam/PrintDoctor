@@ -1,0 +1,226 @@
+[
+  {
+    "id": "OFFICE-01",
+    "expected": "SERVER_PHYSICAL_LINK",
+    "actual": "SERVER_PHYSICAL_LINK",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": true,
+    "findings": [
+      "CMP-001"
+    ],
+    "serverIssues": [
+      "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
+    ],
+    "insufficient": [
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  },
+  {
+    "id": "OFFICE-02",
+    "expected": "SERVER_POWER",
+    "actual": "SERVER_POWER",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": false,
+    "findings": [
+      "CMP-001"
+    ],
+    "serverIssues": [
+      "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
+    ],
+    "insufficient": [
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  },
+  {
+    "id": "OFFICE-03",
+    "expected": "POSSIBLE_IP_CONFLICT_NEEDS_CORROBORATION",
+    "actual": "CMP-001",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": false,
+    "findings": [
+      "CMP-001"
+    ],
+    "serverIssues": [
+      "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
+    ],
+    "insufficient": [
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  },
+  {
+    "id": "OFFICE-04",
+    "expected": "UPSTREAM_NETWORK_PATH",
+    "actual": "CMP-001",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": false,
+    "findings": [
+      "CMP-001"
+    ],
+    "serverIssues": [
+      "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
+    ],
+    "insufficient": [
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  },
+  {
+    "id": "OFFICE-05",
+    "expected": "HOST_REACHABLE_ICMP_SEPARATE",
+    "actual": "INSUFFICIENT_EVIDENCE",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": false,
+    "findings": [],
+    "serverIssues": [],
+    "insufficient": [
+      "Insufficient TCP probes targeting server IP for common-outage analysis.",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  },
+  {
+    "id": "OFFICE-06",
+    "expected": "SERVER_WFP_FIREWALL_CONFIRMED",
+    "actual": "CMP-001",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": false,
+    "findings": [
+      "CMP-001"
+    ],
+    "serverIssues": [
+      "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
+    ],
+    "insufficient": [
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  },
+  {
+    "id": "OFFICE-07",
+    "expected": "NEED_PACKET_PATH_OR_FIREWALL_EVIDENCE",
+    "actual": "CMP-001",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": false,
+    "findings": [
+      "CMP-001"
+    ],
+    "serverIssues": [
+      "All clients fail ICMP and TCP to server \u2014 likely server-side, L2 path, or infrastructure isolation."
+    ],
+    "insufficient": [
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  },
+  {
+    "id": "OFFICE-08",
+    "expected": "CLIENT_SPECIFIC_FAULT",
+    "actual": "INSUFFICIENT_EVIDENCE",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": false,
+    "findings": [],
+    "serverIssues": [],
+    "insufficient": [
+      "Insufficient ICMP probes targeting server IP for common-outage analysis.",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  },
+  {
+    "id": "OFFICE-09",
+    "expected": "PRINT_RPC_APPLICATION_LAYER",
+    "actual": "INSUFFICIENT_EVIDENCE",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": false,
+    "findings": [],
+    "serverIssues": [],
+    "insufficient": [
+      "Insufficient ICMP probes targeting server IP for common-outage analysis.",
+      "Insufficient TCP probes targeting server IP for common-outage analysis.",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  },
+  {
+    "id": "OFFICE-10",
+    "expected": "SHAPRINT_STARTUP_RECURRENCE",
+    "actual": "INSUFFICIENT_EVIDENCE",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": false,
+    "findings": [],
+    "serverIssues": [],
+    "insufficient": [
+      "Insufficient ICMP probes targeting server IP for common-outage analysis.",
+      "Insufficient TCP probes targeting server IP for common-outage analysis.",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  },
+  {
+    "id": "OFFICE-11",
+    "expected": "INVALID_OR_INCONSISTENT_REPORTS",
+    "actual": "INSUFFICIENT_EVIDENCE",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": false,
+    "findings": [],
+    "serverIssues": [],
+    "insufficient": [
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  },
+  {
+    "id": "OFFICE-12",
+    "expected": "INSUFFICIENT_EVIDENCE",
+    "actual": "INSUFFICIENT_EVIDENCE",
+    "verdict": "PASS",
+    "serverIp": "192.168.10.50",
+    "nicDown": false,
+    "findings": [],
+    "serverIssues": [],
+    "insufficient": [
+      "Insufficient ICMP probes targeting server IP for common-outage analysis.",
+      "Insufficient TCP probes targeting server IP for common-outage analysis.",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis",
+      "cursor: insufficient MAC evidence for conflict analysis"
+    ]
+  }
+]

@@ -409,9 +409,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             if (result.NotImplemented)
                 StatusText = result.Message ?? "NOT_IMPLEMENTED";
+            else if (result.NoChange && result.Verified)
+                StatusText = result.Message ?? Labels.AlreadyConfigured;
             else if (result.Verified && result.Status == DiagnosticStatus.Pass)
             {
-                StatusText = result.Message ?? Labels.ScanDone;
+                StatusText = Labels.LocalConfigVerified;
                 await ScanAsync();
             }
             else if (result.Status == DiagnosticStatus.Pass && !result.Verified)
@@ -451,7 +453,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
             "SVC-SPOOLER-START" => new ServiceStartRepair("Spooler", "SVC-SPOOLER-START", "Start Print Spooler", svc, elev),
             "SVC-LANMANSERVER-START" => new ServiceStartRepair("LanmanServer", "SVC-LANMANSERVER-START", "Start LanmanServer", svc, elev),
             "SVC-LANMANWORKSTATION-START" => new ServiceStartRepair("LanmanWorkstation", "SVC-LANMANWORKSTATION-START", "Start LanmanWorkstation", svc, elev),
-            "SHA-START-PROCESS" => new NotImplementedRepair("SHA-START-PROCESS", "ShaPrint process start — verify executable path before enabling (NOT_IMPLEMENTED)"),
+            "SHA-START-PROCESS" => new ShaPrintStartRepair(
+                new WindowsShaPrintInspector(new WindowsNetworkProbe(runner), runner),
+                runner, elev),
+            "NET-MS-SERVER-BINDING" => new NotImplementedRepair("NET-MS-SERVER-BINDING",
+                "File and Printer Sharing (SMB) binding repair — detect-only in RC3; enable after exact adapter selection is field-validated (NOT_IMPLEMENTED)"),
+            "PRN-RESTORE-MAPPING" => new NotImplementedRepair("PRN-RESTORE-MAPPING",
+                "Printer mapping restore — requires confirmed target share; disabled until secure UNC prerequisites are field-validated (NOT_IMPLEMENTED)"),
             _ => new NotImplementedRepair(repairId, "Unknown repair")
         };
 
@@ -569,6 +577,8 @@ public sealed class UiLabels
     public string RepairCancelled { get; init; } = "";
     public string NeedAdmin { get; init; } = "";
     public string UnverifiedSuccess { get; init; } = "";
+    public string LocalConfigVerified { get; init; } = "";
+    public string AlreadyConfigured { get; init; } = "";
     public string RepairFailed { get; init; } = "";
     public string Exported { get; init; } = "";
     public string ExportFailed { get; init; } = "";
@@ -607,6 +617,8 @@ public sealed class UiLabels
         RepairCancelled = "Đã hủy sửa chữa.",
         NeedAdmin = "Cần quyền Administrator (UAC) để sửa.",
         UnverifiedSuccess = "Không tuyên bố SUCCESS khi chưa verify.",
+        LocalConfigVerified = "LOCAL_CONFIG_VERIFIED — chờ xác minh client (WAITING_FOR_CLIENT_VERIFICATION). Chưa tuyên bố FIXED.",
+        AlreadyConfigured = "ALREADY_CONFIGURED — cấu hình đã đúng, không thay đổi hệ thống.",
         RepairFailed = "Sửa thất bại",
         Exported = "Đã xuất",
         ExportFailed = "Xuất báo cáo thất bại",
@@ -646,6 +658,8 @@ public sealed class UiLabels
         RepairCancelled = "Repair cancelled.",
         NeedAdmin = "Administrator (UAC) required for repair.",
         UnverifiedSuccess = "Never claim SUCCESS without verification.",
+        LocalConfigVerified = "LOCAL_CONFIG_VERIFIED — WAITING_FOR_CLIENT_VERIFICATION. Do not claim FIXED.",
+        AlreadyConfigured = "ALREADY_CONFIGURED — no system change.",
         RepairFailed = "Repair failed",
         Exported = "Exported",
         ExportFailed = "Export failed",

@@ -379,6 +379,7 @@ public sealed class DecisionEngine
                     PossibleCauses = new[] { "Crash", "Manual stop", "Dependency failure" },
                     RecommendedActions = new[] { "Start Spooler with user awareness of in-flight jobs" },
                     RepairId = "SVC-SPOOLER-START",
+                    RepairOwner = RepairOwnerRole.LocalAny,
                     VerificationMethod = "Service status + printer enumeration"
                 });
             }
@@ -396,6 +397,7 @@ public sealed class DecisionEngine
                     PossibleCauses = new[] { "Service disabled", "Policy", "Dependency" },
                     RecommendedActions = new[] { "Start LanmanServer if sharing is required" },
                     RepairId = "SVC-LANMANSERVER-START",
+                    RepairOwner = snap.Role == MachineRole.Server ? RepairOwnerRole.LocalServer : RepairOwnerRole.ServerActionRequired,
                     VerificationMethod = "Service status + TCP 445 listen"
                 });
             }
@@ -413,6 +415,7 @@ public sealed class DecisionEngine
                     PossibleCauses = new[] { "Service disabled" },
                     RecommendedActions = new[] { "Start LanmanWorkstation" },
                     RepairId = "SVC-LANMANWORKSTATION-START",
+                    RepairOwner = RepairOwnerRole.LocalAny,
                     VerificationMethod = "Service status + UNC probe"
                 });
             }
@@ -712,6 +715,28 @@ public sealed class DecisionEngine
                     RepairId = "FW-OWNED-SHA48631",
                     RepairOwner = RepairOwnerRole.LocalServer,
                     VerificationMethod = "Rule re-read + client TCP 48631 (still not IPPS PASS)"
+                });
+            }
+
+            if (snap.Role == MachineRole.Server
+                && snap.ShaPrint.ListeningEndpoints.Any(e =>
+                    e.Contains("48633", StringComparison.OrdinalIgnoreCase)
+                    && !e.Contains("FOREIGN", StringComparison.OrdinalIgnoreCase)))
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SHA-005",
+                    Title = "ShaPrint discovery UDP 48633 listening — owned firewall rule may be required",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Warning,
+                    Evidence = "UDP 48633 listening; offer MyPC.PrintDoctor.ShaPrint48633.Private (Private/LocalSubnet only). Never expose TCP 48632 to LAN.",
+                    Confidence = 0.65,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "Inbound UDP filter", "Profile mismatch" },
+                    RecommendedActions = new[] { "Create owned UDP discovery rule only on Private/LocalSubnet" },
+                    RepairId = "FW-OWNED-SHA48633",
+                    RepairOwner = RepairOwnerRole.LocalServer,
+                    VerificationMethod = "Rule re-read + discovery probe (not IPPS PASS)"
                 });
             }
         }
