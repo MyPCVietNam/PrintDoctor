@@ -2,9 +2,9 @@
 
 | Gate | Result |
 |------|--------|
-| UNIT_PASS | PENDING this push |
-| INTEGRATION_PASS | PENDING this push |
-| WINDOWS_CI_PASS | PENDING this push |
+| UNIT_PASS | PASS (100) |
+| INTEGRATION_PASS | PASS (9; no firewall mutation in CI) |
+| WINDOWS_CI_PASS | PASS — https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41319739946 |
 | WIN10_LAB_NOT_RUN | BLOCKED |
 | WIN11_LAB_NOT_RUN | BLOCKED |
 | PHYSICAL_LAN_NOT_RUN | BLOCKED |
@@ -16,4 +16,4 @@
 - D2: empty/whitespace journal → CorruptJournal; ScanAllSessions; Executor BLOCKED; no overwrite
 - D2: missing journal file → Clean (not corrupt)
 
-Honest note: unit/fixture ≠ Windows physical lab. Not FIELD READY.
+Honest note: unit/fixture ≠ Windows physical lab. Not FIELD READY. Next: Windows READ-ONLY FIELD VALIDATION.
