@@ -40,6 +40,8 @@ public sealed class RollbackResult
     public bool Succeeded { get; init; }
     public bool Verified { get; init; }
     public bool Unsupported { get; init; }
+    /// <summary>True when some rules restored but not all attributes/rules verified.</summary>
+    public bool Partial { get; init; }
     public string? Message { get; init; }
 }
 

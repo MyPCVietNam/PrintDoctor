@@ -210,13 +210,62 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         var (net, fw, svc, smb, prn, sha, elev, profiles) = PlatformComposition.CreateWindowsStack();
         _ = (net, smb, prn, sha);
-        var primaryIf = _lastSnapshot.Adapters
-            .Where(a => a.IsUp && a.Kind is AdapterKind.Ethernet or AdapterKind.WiFi)
-            .OrderBy(a => a.InterfaceMetric ?? int.MaxValue)
-            .ThenBy(a => a.InterfaceIndex)
-            .Select(a => (int?)a.InterfaceIndex)
-            .FirstOrDefault();
-        var op = CreateRepair(pick.RepairId!, fw, svc, elev, profiles, primaryIf);
+
+        int? selectedIf = null;
+        string? previewDetail = null;
+        if (pick.RepairId == "NET-PROFILE-PRIVATE")
+        {
+            var candidates = _lastSnapshot.Adapters
+                .Where(a => a.IsUp && a.Category == NetworkCategory.Public)
+                .OrderBy(a => a.InterfaceMetric ?? int.MaxValue)
+                .ThenBy(a => a.InterfaceIndex)
+                .ToList();
+            if (candidates.Count == 0)
+            {
+                StatusText = "No Public adapters available for profile repair.";
+                return;
+            }
+            // Explicit selection required — never silently pick first NIC when multiple/VPN present
+            var lines = candidates.Select((a, i) =>
+                $"{i + 1}) IfIndex={a.InterfaceIndex} Alias={a.Name} IP={string.Join(",", a.IPv4Addresses)} GW={a.DefaultGateway} Cat={a.Category} Metric={a.InterfaceMetric}").ToList();
+            var prompt = "Chọn interface (nhập số 1.." + candidates.Count + ") — multi-NIC/VPN bắt buộc chọn đúng:\n\n"
+                         + string.Join("\n", lines)
+                         + "\n\nCancel = hủy. OK sau khi ghi nhớ số; hộp nhập phía sau.";
+            MessageBox.Show(prompt, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Information);
+            // Use single candidate only when exactly one Public NIC; otherwise require index via InputBox substitute
+            if (candidates.Count == 1)
+            {
+                selectedIf = candidates[0].InterfaceIndex;
+                previewDetail = lines[0];
+            }
+            else
+            {
+                // WPF has no InputBox — present Yes/No per candidate until one chosen
+                selectedIf = null;
+                foreach (var (a, idx) in candidates.Select((a, i) => (a, i)))
+                {
+                    var ans = MessageBox.Show(
+                        $"Sửa profile cho interface này?\n\n{lines[idx]}",
+                        Labels.SafeRepair,
+                        MessageBoxButton.YesNoCancel,
+                        MessageBoxImage.Question);
+                    if (ans == MessageBoxResult.Cancel) { StatusText = Labels.RepairCancelled; return; }
+                    if (ans == MessageBoxResult.Yes)
+                    {
+                        selectedIf = a.InterfaceIndex;
+                        previewDetail = lines[idx];
+                        break;
+                    }
+                }
+                if (selectedIf is null)
+                {
+                    StatusText = "Không chọn interface — repair bị từ chối (InterfaceIndex=?).";
+                    return;
+                }
+            }
+        }
+
+        var op = CreateRepair(pick.RepairId!, fw, svc, elev, profiles, selectedIf, previewDetail);
 
         if (!op.IsImplemented)
         {
@@ -254,11 +303,25 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return;
             }
 
-            var journalDir = Path.Combine(_exporter.DefaultRoot, "Journals", _lastSnapshot.SessionId);
+            var journalsRoot = Path.Combine(_exporter.DefaultRoot, "Journals");
+            var crossSession = RepairJournal.ScanAllSessions(journalsRoot);
+            if (crossSession is RepairRecoveryState.UncertainState or RepairRecoveryState.Incomplete)
+            {
+                var details = RepairJournal.ListUncertain(journalsRoot);
+                StatusText = "UNCERTAIN_STATE: unfinished repair transaction(s) across sessions — review journal; no auto-rollback; further repairs blocked.";
+                MessageBox.Show(
+                    StatusText + "\n\n" + string.Join("\n", details.Take(8).Select(d => $"{d.SessionPath}: {d.OperationId}/{d.TransactionId} {d.Detail}")),
+                    Labels.SafeRepair,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            var journalDir = Path.Combine(journalsRoot, _lastSnapshot.SessionId);
             _lastJournal = new RepairJournal(journalDir);
             if (_lastJournal.GetRecoveryState() == RepairRecoveryState.UncertainState)
             {
-                StatusText = "UNCERTAIN_STATE: prior repair ApplyStarted without completion — review journal before another repair.";
+                StatusText = "UNCERTAIN_STATE: prior repair Applied/ApplyStarted without Verify — review journal before another repair.";
                 MessageBox.Show(StatusText, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -303,12 +366,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Abstractions.Services.IWindowsServiceInspector svc,
         Abstractions.Security.IElevationService elev,
         Abstractions.Firewall.INetworkProfileService profiles,
-        int? preferredInterfaceIndex = null)
+        int? preferredInterfaceIndex = null,
+        string? previewDetail = null)
         => repairId switch
         {
             "FW-ICMP-ECHO" => new FirewallIcmpEchoRepair(fw, elev),
             "FW-FILE-PRINT-SHARE" => new FilePrintShareRepair(fw, elev),
-            "NET-PROFILE-PRIVATE" => new NetworkProfilePrivateRepair(profiles, elev, preferredInterfaceIndex),
+            "NET-PROFILE-PRIVATE" => new NetworkProfilePrivateRepair(profiles, elev, preferredInterfaceIndex, previewDetail),
             "SVC-SPOOLER-START" => new ServiceStartRepair("Spooler", "SVC-SPOOLER-START", "Start Print Spooler", svc, elev),
             "SVC-LANMANSERVER-START" => new ServiceStartRepair("LanmanServer", "SVC-LANMANSERVER-START", "Start LanmanServer", svc, elev),
             "SVC-LANMANWORKSTATION-START" => new ServiceStartRepair("LanmanWorkstation", "SVC-LANMANWORKSTATION-START", "Start LanmanWorkstation", svc, elev),

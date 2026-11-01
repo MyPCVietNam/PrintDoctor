@@ -6,14 +6,12 @@ using MyPC.LanPrintDoctor.Abstractions.Security;
 
 namespace MyPC.LanPrintDoctor.Repair.Operations;
 
-/// <summary>
-/// Enables only named FPS inbound rules after Private+LocalSubnet — never Enable-NetFirewallRule -Group.
-/// </summary>
 public sealed class FilePrintShareRepair : IRepairOperation
 {
     private readonly IFirewallInspector _firewall;
     private readonly IElevationService _elevation;
     private string? _evidence;
+    private List<string> _changedRuleIds = new();
 
     public FilePrintShareRepair(IFirewallInspector firewall, IElevationService elevation)
     {
@@ -27,6 +25,7 @@ public sealed class FilePrintShareRepair : IRepairOperation
     public bool SupportsRollback => true;
     public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalAny;
     public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
+    public IReadOnlyList<string> LastChangedRuleIds => _changedRuleIds;
 
     public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
     {
@@ -50,14 +49,8 @@ public sealed class FilePrintShareRepair : IRepairOperation
         {
             OperationId = OperationId,
             Title = Title,
-            Description = "Enable approved FPS inbound rules by name (SMB/Spooler/NBSession) for Private+LocalSubnet only. Does NOT call Enable-NetFirewallRule -Group.",
-            Changes = new[]
-            {
-                "Per-rule Set-NetFirewallRule -Profile Private before Enable",
-                "RemoteAddress=LocalSubnet where supported",
-                "Skip GPO-managed rules",
-                "No Public/Domain enablement"
-            },
+            Description = "Enable approved FPS rules by name only. RemoteAddress=LocalSubnet must succeed before Enable. Never Enable-NetFirewallRule -Group. Public rules untouched.",
+            Changes = FirewallRuleScope.ApprovedFpsRuleIds.Select(id => $"Scope+Enable {id} (Private/LocalSubnet)").ToArray(),
             Risks = new[] { "Exposes SMB/printer sharing on Private/LocalSubnet" },
             Reversible = true
         });
@@ -73,25 +66,25 @@ public sealed class FilePrintShareRepair : IRepairOperation
 
     public async Task ApplyAsync(CancellationToken ct = default)
     {
-        var ok = await _firewall.EnableFileAndPrinterSharingAsync(ct);
-        if (!ok)
-            throw new InvalidOperationException("Failed to enable scoped File and Printer Sharing rules.");
+        var result = await _firewall.EnableFileAndPrinterSharingAsync(ct);
+        if (!result.Success)
+            throw new InvalidOperationException(result.Detail ?? "Scoped FPS enable failed.");
+        _changedRuleIds = result.ChangedRuleIds.ToList();
+        if (_changedRuleIds.Count == 0)
+            throw new InvalidOperationException("No changed FPS rule ids recorded.");
     }
 
     public async Task<bool> VerifyAsync(CancellationToken ct = default)
     {
+        if (_changedRuleIds.Count == 0) return false;
         var rules = await _firewall.GetRelevantRulesAsync(ct);
-        // At least one scoped FPS rule; and no newly enabled Public-only FPS rule claimed as success
-        var scoped = rules.Where(FirewallRuleScope.IsScopedFilePrintShareRule).ToList();
-        if (scoped.Count == 0) return false;
-        // Fail verify if any enabled FPS inbound rule is Public without Private
+        if (!FirewallRuleScope.AllChangedSatisfy(rules, _changedRuleIds, FirewallRuleScope.IsScopedFilePrintShareRule))
+            return false;
+        // Public copies must not have been enabled as part of this repair
         var badPublic = rules.Any(r =>
             r.Enabled
-            && r.Direction.Contains("In", StringComparison.OrdinalIgnoreCase)
-            && ((r.RuleId ?? "").StartsWith("FPS-", StringComparison.OrdinalIgnoreCase)
-                || (r.Grouping?.Contains("FirewallAPI.dll,-28502") ?? false))
             && (r.Profiles?.Contains("Public", StringComparison.OrdinalIgnoreCase) ?? false)
-            && !(r.Profiles?.Contains("Private", StringComparison.OrdinalIgnoreCase) ?? false));
+            && _changedRuleIds.Any(id => string.Equals(id, r.RuleId, StringComparison.OrdinalIgnoreCase)));
         return !badPublic;
     }
 
@@ -101,11 +94,10 @@ public sealed class FilePrintShareRepair : IRepairOperation
         return new RollbackResult
         {
             Attempted = true,
-            Succeeded = restored,
-            Verified = restored,
-            Message = restored
-                ? "Sharing firewall rules restored and re-read matched backup."
-                : "Sharing rollback not verified against backup."
+            Succeeded = restored.Succeeded,
+            Verified = restored.Verified && !restored.Partial,
+            Partial = restored.Partial,
+            Message = restored.Message
         };
     }
 }

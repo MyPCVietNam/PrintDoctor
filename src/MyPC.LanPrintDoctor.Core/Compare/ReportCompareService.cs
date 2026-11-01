@@ -30,7 +30,7 @@ public sealed class ReportCompareService
         var clients = clientReportPaths.Select(LoadSnapshot).ToList();
         ValidateSchema(server, expectRole: MachineRole.Server, path: serverReportPath);
         foreach (var (c, path) in clients.Zip(clientReportPaths))
-            ValidateSchema(c, expectRole: null, path: path);
+            ValidateSchema(c, expectRole: MachineRole.Client, path: path);
 
         var result = _engine.Compare(new CompareInput { Server = server, Clients = clients });
         if (IsRedacted(server) || clients.Any(IsRedacted))

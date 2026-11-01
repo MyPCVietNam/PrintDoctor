@@ -12,10 +12,13 @@ public sealed class FakeFirewallInspector : IFirewallInspector
     public ProbeOutcome ThirdPartyStatus { get; set; } = ProbeOutcome.Pass;
     public bool IcmpEnableResult { get; set; } = true;
     public bool SharingEnableResult { get; set; } = true;
-    public bool ThrowOnEnable { get; set; }
+    /// <summary>Simulate Set-NetFirewallAddressFilter failure — Enable must not run.</summary>
+    public bool FailRemoteAddressSet { get; set; }
+    public bool FailRemoteAddressRestore { get; set; }
     public int IcmpEnableCalls { get; private set; }
     public int SharingEnableCalls { get; private set; }
-    public int GroupEnableCalls { get; private set; } // must stay 0 — group enable forbidden
+    public int GroupEnableCalls { get; private set; }
+    public int EnableInvocationsAfterFailedScope { get; private set; }
 
     public Task<IReadOnlyList<FirewallProfileState>> GetProfilesAsync(CancellationToken ct = default)
         => Task.FromResult((IReadOnlyList<FirewallProfileState>)Profiles);
@@ -29,16 +32,28 @@ public sealed class FakeFirewallInspector : IFirewallInspector
     public Task<ProbeOutcome> GetThirdPartyCollectionStatusAsync(CancellationToken ct = default)
         => Task.FromResult(ThirdPartyStatus);
 
-    public Task<bool> EnableScopedIcmpEchoAsync(CancellationToken ct = default)
+    public Task<FirewallMutationResult> EnableScopedIcmpEchoAsync(CancellationToken ct = default)
     {
+        if (FailRemoteAddressSet)
+        {
+            EnableInvocationsAfterFailedScope = 0;
+            return Task.FromResult(new FirewallMutationResult
+            {
+                Success = false,
+                Detail = "REMOTE_NOT_SET — Enable not called"
+            });
+        }
+
+        if (!IcmpEnableResult)
+            return Task.FromResult(new FirewallMutationResult { Success = false, Detail = "enable failed" });
+
         IcmpEnableCalls++;
-        if (ThrowOnEnable) throw new InvalidOperationException("PS failure");
-        if (!IcmpEnableResult) return Task.FromResult(false);
-
-        // Preserve Public rules untouched
-        var existingPublic = Rules.Where(r => (r.Profiles ?? "").Contains("Public", StringComparison.OrdinalIgnoreCase)).ToList();
-
-        Rules.RemoveAll(r => (r.RuleId ?? "").Contains("FPS-ICMP4-ERQ-In"));
+        // Single named rule — replace in place (do not leave Domain/Public duplicate same RuleId)
+        var preservedPublicOther = Rules
+            .Where(r => (r.Profiles ?? "").Contains("Public", StringComparison.OrdinalIgnoreCase)
+                        && !(r.RuleId ?? "").Contains("FPS-ICMP4-ERQ-In", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        Rules.RemoveAll(r => (r.RuleId ?? "").Contains("FPS-ICMP4-ERQ-In", StringComparison.OrdinalIgnoreCase));
         Rules.Add(new FirewallRuleInfo
         {
             RuleId = "FPS-ICMP4-ERQ-In",
@@ -53,61 +68,81 @@ public sealed class FakeFirewallInspector : IFirewallInspector
             PolicyStore = "ActiveStore",
             IcmpTypesAndCodes = "8"
         });
+        foreach (var p in preservedPublicOther)
+            if (!Rules.Contains(p)) Rules.Add(p);
 
-        // Ensure public copies still present
-        foreach (var p in existingPublic.Where(r => !(r.RuleId ?? "").Contains("FPS-ICMP4-ERQ-In")))
+        return Task.FromResult(new FirewallMutationResult
         {
-            if (!Rules.Any(x => x.RuleId == p.RuleId && x.Profiles == p.Profiles))
-                Rules.Add(p);
-        }
-
-        return Task.FromResult(true);
+            Success = true,
+            ChangedRuleIds = new[] { "FPS-ICMP4-ERQ-In" }
+        });
     }
 
-    public Task<bool> RestoreIcmpEchoFromBackupAsync(string backupJson, CancellationToken ct = default)
+    public Task<FirewallRestoreResult> RestoreIcmpEchoFromBackupAsync(string backupJson, CancellationToken ct = default)
     {
         try
         {
             var priors = JsonSerializer.Deserialize<List<FirewallRuleInfo>>(string.IsNullOrWhiteSpace(backupJson) ? "[]" : backupJson)
                          ?? new();
             var prior = priors.FirstOrDefault(r => (r.RuleId ?? "").Contains("FPS-ICMP4-ERQ-In", StringComparison.OrdinalIgnoreCase));
-            Rules.RemoveAll(r => (r.RuleId ?? "").Contains("FPS-ICMP4-ERQ-In"));
-            if (prior is not null)
+            if (prior is null)
+                return Task.FromResult(new FirewallRestoreResult { Succeeded = false, Verified = false, Message = "no backup" });
+
+            if (FailRemoteAddressRestore)
             {
+                // Simulate partial: Enabled restored but RemoteAddress stuck at LocalSubnet
+                Rules.RemoveAll(r => (r.RuleId ?? "").Contains("FPS-ICMP4-ERQ-In"));
                 Rules.Add(new FirewallRuleInfo
                 {
                     RuleId = prior.RuleId ?? "FPS-ICMP4-ERQ-In",
                     Name = prior.Name,
-                    DisplayName = prior.DisplayName,
                     Enabled = prior.Enabled,
                     Direction = prior.Direction,
                     Action = prior.Action,
                     Protocol = prior.Protocol,
                     Profiles = prior.Profiles,
-                    RemoteAddresses = prior.RemoteAddresses,
-                    LocalPorts = prior.LocalPorts,
-                    PolicyStore = prior.PolicyStore ?? "ActiveStore",
-                    IcmpTypesAndCodes = prior.IcmpTypesAndCodes,
-                    Grouping = prior.Grouping
+                    RemoteAddresses = "LocalSubnet", // WRONG vs backup
+                    PolicyStore = "ActiveStore",
+                    IcmpTypesAndCodes = prior.IcmpTypesAndCodes
+                });
+                return Task.FromResult(new FirewallRestoreResult
+                {
+                    Succeeded = true,
+                    Verified = false,
+                    Partial = true,
+                    FailedRuleIds = new[] { "FPS-ICMP4-ERQ-In" },
+                    Message = "PARTIAL_ROLLBACK: RemoteAddress restore failed"
                 });
             }
-            return Task.FromResult(true);
+
+            Rules.RemoveAll(r => (r.RuleId ?? "").Contains("FPS-ICMP4-ERQ-In"));
+            Rules.Add(Clone(prior));
+            return Task.FromResult(new FirewallRestoreResult
+            {
+                Succeeded = true,
+                Verified = true,
+                RestoredRuleIds = new[] { prior.RuleId ?? "FPS-ICMP4-ERQ-In" },
+                Message = "restored"
+            });
         }
-        catch
+        catch (Exception ex)
         {
-            return Task.FromResult(false);
+            return Task.FromResult(new FirewallRestoreResult { Succeeded = false, Verified = false, Message = ex.Message });
         }
     }
 
-    public Task<bool> EnableFileAndPrinterSharingAsync(CancellationToken ct = default)
+    public Task<FirewallMutationResult> EnableFileAndPrinterSharingAsync(CancellationToken ct = default)
     {
-        SharingEnableCalls++;
-        // Intentionally never increments GroupEnableCalls
-        if (!SharingEnableResult) return Task.FromResult(false);
+        if (FailRemoteAddressSet)
+            return Task.FromResult(new FirewallMutationResult { Success = false, Detail = "REMOTE_NOT_SET — Enable not called" });
 
-        void Upsert(string id, string ports)
+        SharingEnableCalls++;
+        if (!SharingEnableResult)
+            return Task.FromResult(new FirewallMutationResult { Success = false });
+
+        var changed = new List<string>();
+        foreach (var id in new[] { "FPS-SMB-In-TCP", "FPS-SpoolSvc-In-TCP" })
         {
-            // Never touch Public/Domain copies — only replace Private-scoped instance
             Rules.RemoveAll(r => r.RuleId == id && (r.Profiles ?? "").Contains("Private", StringComparison.OrdinalIgnoreCase));
             Rules.Add(new FirewallRuleInfo
             {
@@ -118,35 +153,60 @@ public sealed class FakeFirewallInspector : IFirewallInspector
                 Action = "Allow",
                 Grouping = "@FirewallAPI.dll,-28502",
                 Protocol = "TCP",
-                LocalPorts = ports,
+                LocalPorts = id.Contains("SMB") ? "445" : "RPC",
                 Profiles = "Private",
                 RemoteAddresses = "LocalSubnet",
                 PolicyStore = "ActiveStore"
             });
+            changed.Add(id);
         }
-
-        Upsert("FPS-SMB-In-TCP", "445");
-        Upsert("FPS-SpoolSvc-In-TCP", "RPC");
-        return Task.FromResult(true);
+        return Task.FromResult(new FirewallMutationResult { Success = true, ChangedRuleIds = changed });
     }
 
-    public Task<bool> RestoreFileAndPrinterSharingFromBackupAsync(string backupJson, CancellationToken ct = default)
+    public Task<FirewallRestoreResult> RestoreFileAndPrinterSharingFromBackupAsync(string backupJson, CancellationToken ct = default)
     {
         try
         {
             var priors = JsonSerializer.Deserialize<List<FirewallRuleInfo>>(string.IsNullOrWhiteSpace(backupJson) ? "[]" : backupJson)
                          ?? new();
-            foreach (var prior in priors.Where(r => (r.RuleId ?? "").StartsWith("FPS-", StringComparison.OrdinalIgnoreCase)
-                                                    || (r.Grouping?.Contains("FirewallAPI.dll,-28502") ?? false)))
+            var restored = new List<string>();
+            foreach (var prior in priors.Where(r => (r.RuleId ?? "").StartsWith("FPS-", StringComparison.OrdinalIgnoreCase)))
             {
-                Rules.RemoveAll(r => string.Equals(r.RuleId, prior.RuleId, StringComparison.OrdinalIgnoreCase));
-                Rules.Add(prior);
+                Rules.RemoveAll(r => string.Equals(r.RuleId, prior.RuleId, StringComparison.OrdinalIgnoreCase)
+                                     && string.Equals(r.Profiles, prior.Profiles, StringComparison.OrdinalIgnoreCase));
+                // Keep Public copies
+                Rules.RemoveAll(r => string.Equals(r.RuleId, prior.RuleId, StringComparison.OrdinalIgnoreCase)
+                                     && (r.Profiles ?? "").Contains("Private", StringComparison.OrdinalIgnoreCase));
+                Rules.Add(Clone(prior));
+                restored.Add(prior.RuleId ?? prior.Name);
             }
-            return Task.FromResult(true);
+            return Task.FromResult(new FirewallRestoreResult
+            {
+                Succeeded = true,
+                Verified = true,
+                RestoredRuleIds = restored
+            });
         }
-        catch
+        catch (Exception ex)
         {
-            return Task.FromResult(false);
+            return Task.FromResult(new FirewallRestoreResult { Succeeded = false, Verified = false, Message = ex.Message });
         }
     }
+
+    private static FirewallRuleInfo Clone(FirewallRuleInfo p) => new()
+    {
+        RuleId = p.RuleId,
+        Name = p.Name,
+        DisplayName = p.DisplayName,
+        Enabled = p.Enabled,
+        Direction = p.Direction,
+        Action = p.Action,
+        Protocol = p.Protocol,
+        Profiles = p.Profiles,
+        RemoteAddresses = p.RemoteAddresses,
+        LocalPorts = p.LocalPorts,
+        PolicyStore = p.PolicyStore ?? "ActiveStore",
+        IcmpTypesAndCodes = p.IcmpTypesAndCodes,
+        Grouping = p.Grouping
+    };
 }

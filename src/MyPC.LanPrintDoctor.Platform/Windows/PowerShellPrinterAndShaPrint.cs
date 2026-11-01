@@ -137,26 +137,33 @@ public sealed class WindowsShaPrintInspector : IShaPrintInspector
 
     private async Task<(IReadOnlyList<string> Endpoints, ProbeOutcome Status)> CollectListeningAsync(CancellationToken ct)
     {
-        // Only count listeners whose owning process is ShaPrint / matching install PID.
+        // Only ShaPrint executable identity — NEVER assume PrintBridge == ShaPrint.
         var script = $@"
 $ErrorActionPreference = 'Stop'
-$sha = Get-Process -Name 'ShaPrint*','PrintBridge*' -ErrorAction SilentlyContinue
+function Test-ShaPrintProc($p) {{
+  try {{
+    $path = $p.Path
+    if (-not $path) {{ $path = (Get-CimInstance Win32_Process -Filter (""ProcessId="" + $p.Id) -ErrorAction SilentlyContinue).ExecutablePath }}
+    if (-not $path) {{ return $false }}
+    $name = [IO.Path]::GetFileNameWithoutExtension($path)
+    return ($name -match '^(?i)ShaPrint') -and ($path -match '(?i)ShaPrint') -and ($path -notmatch '(?i)PrintBridge')
+  }} catch {{ return $false }}
+}}
+$sha = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {{ Test-ShaPrintProc $_ }})
 $shaPids = @($sha | Select-Object -ExpandProperty Id)
 $tcp = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
   Where-Object {{ $_.LocalPort -in {ShaPrintPorts.ServerTcp},{ShaPrintPorts.ClientLoopbackTcp} }} |
   ForEach-Object {{
     $own = $_.OwningProcess
     if ($shaPids -contains $own) {{ 'TCP:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
-    else {{ 'FOREIGN:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
+    else {{ 'FOREIGN_PROCESS:PORT_CONFLICT:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
   }}
 $udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue |
   Where-Object {{ $_.LocalPort -eq {ShaPrintPorts.DiscoveryUdp} }} |
   ForEach-Object {{
     $own = $_.OwningProcess
-    if ($shaPids -contains $own -or $shaPids.Count -eq 0) {{
-      if ($shaPids -contains $own) {{ 'UDP:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
-      else {{ 'FOREIGNUDP:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
-    }} else {{ 'FOREIGNUDP:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
+    if ($shaPids -contains $own) {{ 'UDP:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
+    else {{ 'FOREIGN_PROCESS:PORT_CONFLICT:' + $_.LocalAddress + ':' + $_.LocalPort + ':pid=' + $own }}
   }}
 @($tcp + $udp) | ConvertTo-Json -Compress
 ";
@@ -164,7 +171,7 @@ $udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue |
         if (result.ExitCode != 0)
             return (Array.Empty<string>(), ProbeOutcome.Unknown);
         if (string.IsNullOrWhiteSpace(result.StdOut) || result.StdOut.Trim() is "null" or "[]")
-            return (Array.Empty<string>(), ProbeOutcome.Pass); // collected, none listening
+            return (Array.Empty<string>(), ProbeOutcome.Pass);
 
         try
         {
@@ -173,7 +180,7 @@ $udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue |
                 .Select(e => e.ValueKind == JsonValueKind.String ? e.GetString() ?? "" : e.ToString())
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .ToList();
-            // Ports owned by other processes are NOT ShaPrint listeners
+            // FOREIGN_PROCESS / PORT_CONFLICT are evidence of conflict — not ShaPrint PASS listeners
             var owned = all.Where(s => !s.StartsWith("FOREIGN", StringComparison.OrdinalIgnoreCase)).ToList();
             return (owned, ProbeOutcome.Pass);
         }

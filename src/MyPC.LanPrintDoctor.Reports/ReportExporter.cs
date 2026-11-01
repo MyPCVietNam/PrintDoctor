@@ -291,12 +291,17 @@ if ($errs.Count -gt 0) { 'COLLECTOR_WARNINGS:'; $errs }
         return t;
     }
 
+    // Ephemeral HMAC key — never written into the shared ZIP (prevents rainbow reversal of SHA256(IP)).
+    private static readonly byte[] SessionHmacKey = RandomNumberGenerator.GetBytes(32);
+
     private static string StableToken(string? value, Dictionary<string, string> tokens)
     {
         if (string.IsNullOrWhiteSpace(value)) return "***";
         if (tokens.TryGetValue(value, out var existing)) return existing;
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value.ToLowerInvariant()))).ToLowerInvariant();
-        var token = "tok:" + hash[..10];
+        // Random per-export mapping preferred; HMAC with ephemeral key for within-session stability only.
+        Span<byte> mac = stackalloc byte[32];
+        HMACSHA256.HashData(SessionHmacKey, Encoding.UTF8.GetBytes(value.ToLowerInvariant()), mac);
+        var token = "tok:" + Convert.ToHexString(mac)[..12].ToLowerInvariant();
         tokens[value] = token;
         return token;
     }

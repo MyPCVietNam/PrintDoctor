@@ -314,9 +314,10 @@ public class DecisionEngineScenarioTests
                 new NetworkConnectionProfile { InterfaceIndex = 12, Name = "Ethernet", NetworkCategory = "Public" }
             }
         };
-        var op = new NetworkProfilePrivateRepair(profiles, elev);
+        var op = new NetworkProfilePrivateRepair(profiles, elev, preferredInterfaceIndex: 12);
         var preview = await op.PreviewChangesAsync();
         Assert.DoesNotContain(preview.Changes, c => c.Contains("netsh int ip reset", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(preview.Changes, c => c == "InterfaceIndex=?");
         Assert.True(preview.Reversible);
     }
 

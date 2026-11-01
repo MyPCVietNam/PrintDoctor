@@ -132,7 +132,7 @@ public class P11RegressionTests
                 }
             }
         };
-        var op = new NetworkProfilePrivateRepair(profiles, elev);
+        var op = new NetworkProfilePrivateRepair(profiles, elev, preferredInterfaceIndex: 5);
         var prereq = await op.CheckPrerequisitesAsync();
         Assert.False(prereq.CanProceed);
         Assert.Contains("Domain", prereq.Reason ?? "", StringComparison.OrdinalIgnoreCase);

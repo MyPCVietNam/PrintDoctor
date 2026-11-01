@@ -6,14 +6,12 @@ using MyPC.LanPrintDoctor.Abstractions.Security;
 
 namespace MyPC.LanPrintDoctor.Repair.Operations;
 
-/// <summary>
-/// Local-server ICMP Echo repair: Private + LocalSubnet only. Never group-enable.
-/// </summary>
 public sealed class FirewallIcmpEchoRepair : IRepairOperation
 {
     private readonly IFirewallInspector _firewall;
     private readonly IElevationService _elevation;
     private string? _evidence;
+    private List<string> _changedRuleIds = new();
 
     public FirewallIcmpEchoRepair(IFirewallInspector firewall, IElevationService elevation)
     {
@@ -27,6 +25,7 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
     public bool SupportsRollback => true;
     public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalServer;
     public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
+    public IReadOnlyList<string> LastChangedRuleIds => _changedRuleIds;
 
     public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
     {
@@ -50,14 +49,13 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
         {
             OperationId = OperationId,
             Title = Title,
-            Description = "Enable FPS-ICMP4-ERQ-In only after setting Profile=Private and RemoteAddress=LocalSubnet. Does not enable group-wide rules or Public/Domain.",
+            Description = "Enable FPS-ICMP4-ERQ-In only after Profile=Private and RemoteAddress=LocalSubnet succeed. Enable is aborted if scope set fails.",
             Changes = new[]
             {
-                "Target rule id FPS-ICMP4-ERQ-In",
-                "Set Profile=Private BEFORE Enable",
-                "Set RemoteAddress=LocalSubnet BEFORE Enable",
-                "Direction=Inbound Action=Allow",
-                "Skip if PolicyStore indicates GPO"
+                "Set Profile=Private + RemoteAddress=LocalSubnet (Stop on failure)",
+                "Enable only after scope re-read confirms LocalSubnet",
+                "Changed-rule list recorded for Verify (not any matching rule)",
+                "Skip GPO-managed rules"
             },
             Risks = new[] { "Allows ICMP echo from local subnet on Private profile only" },
             Reversible = true
@@ -74,30 +72,32 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
 
     public async Task ApplyAsync(CancellationToken ct = default)
     {
-        var ok = await _firewall.EnableScopedIcmpEchoAsync(ct);
-        if (!ok)
-            throw new InvalidOperationException("Failed to enable scoped ICMP Echo firewall rule (PowerShell did not return OK / scope verify failed).");
+        var result = await _firewall.EnableScopedIcmpEchoAsync(ct);
+        if (!result.Success)
+            throw new InvalidOperationException(result.Detail ?? "Scoped ICMP enable failed (Enable not applied without scope).");
+        _changedRuleIds = result.ChangedRuleIds.ToList();
+        if (_changedRuleIds.Count == 0)
+            throw new InvalidOperationException("No changed rule ids recorded — refusing success.");
     }
 
     public async Task<bool> VerifyAsync(CancellationToken ct = default)
     {
+        if (_changedRuleIds.Count == 0) return false;
         var rules = await _firewall.GetRelevantRulesAsync(ct);
-        // Strict: ALL scope conditions via FirewallRuleScope — not merely Enabled=true
-        return rules.Any(FirewallRuleScope.IsScopedIcmpEcho);
+        // ALL changed rules must satisfy scoped ICMP — one bad ⇒ fail
+        return FirewallRuleScope.AllChangedSatisfy(rules, _changedRuleIds, FirewallRuleScope.IsScopedIcmpEcho);
     }
 
     public async Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default)
     {
         var restored = await _firewall.RestoreIcmpEchoFromBackupAsync(backup.PayloadJson ?? "[]", ct);
-        // Restore method itself re-reads and compares; do not claim verified on PowerShell OK alone
         return new RollbackResult
         {
             Attempted = true,
-            Succeeded = restored,
-            Verified = restored,
-            Message = restored
-                ? "ICMP rule attributes restored and re-read matched backup."
-                : "ICMP rollback could not be verified against backup snapshot."
+            Succeeded = restored.Succeeded,
+            Verified = restored.Verified && !restored.Partial,
+            Partial = restored.Partial,
+            Message = restored.Message ?? (restored.Verified ? "verified" : "not verified")
         };
     }
 

@@ -147,11 +147,12 @@ public sealed class RepairExecutor
                     Verified = false,
                     BackupId = backup.BackupId,
                     RollbackAttempted = rb.Attempted,
-                    RolledBack = rb.Succeeded && rb.Verified,
-                    RollbackVerified = rb.Verified,
+                    RolledBack = rb.Succeeded && rb.Verified && !rb.Partial,
+                    RollbackVerified = rb.Verified && !rb.Partial,
                     RollbackUnsupported = rb.Unsupported || !operation.SupportsRollback,
                     Status = DiagnosticStatus.Fail,
                     Message = BuildFailMessage("Repair applied but verification failed.", rb, operation.SupportsRollback)
+                        + (rb.Partial ? " PARTIAL_ROLLBACK." : "")
                 };
             }
 
@@ -228,13 +229,19 @@ public sealed class RepairExecutor
 
         try
         {
+            _journal.Record(tx, operation.OperationId, "RollbackStarted", true);
             var result = await operation.RollbackAsync(backup, CancellationToken.None);
-            _journal.Record(tx, operation.OperationId, "Rollback", result.Succeeded && result.Verified,
+            _journal.Record(tx, operation.OperationId, "Rollback", result.Succeeded && result.Verified && !result.Partial,
                 result.Message ?? (result.Verified ? "Rollback verified" : "Rollback attempted"));
+            if (result.Verified && !result.Partial)
+                _journal.Record(tx, operation.OperationId, "RollbackVerified", true, result.Message);
+            else
+                _journal.Record(tx, operation.OperationId, "RollbackVerified", false, result.Message ?? "PARTIAL_ROLLBACK or unverified");
             return result;
         }
         catch (Exception ex)
         {
+            _journal.Record(tx, operation.OperationId, "RollbackStarted", false, ex.Message);
             _journal.Record(tx, operation.OperationId, "Rollback", false, ex.Message);
             return new RollbackResult
             {
@@ -252,6 +259,8 @@ public sealed class RepairExecutor
             return prefix + " Rollback unsupported — irreversible change may remain.";
         if (!rb.Attempted)
             return prefix + " Rollback was not attempted.";
+        if (rb.Partial)
+            return prefix + " PARTIAL_ROLLBACK — some attributes/rules not restored; keep evidence.";
         if (rb.Succeeded && rb.Verified)
             return prefix + " Rollback verified.";
         if (rb.Attempted && !rb.Verified)

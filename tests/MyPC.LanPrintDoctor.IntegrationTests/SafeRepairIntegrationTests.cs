@@ -99,7 +99,7 @@ public class SafeRepairIntegrationTests
                 new NetworkConnectionProfile { InterfaceIndex = 12, Name = "Ethernet", NetworkCategory = "Public" }
             }
         };
-        var op = new NetworkProfilePrivateRepair(profiles, elev);
+        var op = new NetworkProfilePrivateRepair(profiles, elev, preferredInterfaceIndex: 12);
         var preview = await op.PreviewChangesAsync();
         var blob = string.Join(" ", preview.Changes) + " " + preview.Description;
         Assert.DoesNotContain("winsock reset", blob, StringComparison.OrdinalIgnoreCase);
