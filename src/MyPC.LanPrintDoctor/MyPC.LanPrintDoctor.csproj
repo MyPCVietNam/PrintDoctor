@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>MyPC.LanPrintDoctor</AssemblyName>
+    <RootNamespace>MyPC.LanPrintDoctor</RootNamespace>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.Abstractions\MyPC.LanPrintDoctor.Abstractions.csproj" />
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.Core\MyPC.LanPrintDoctor.Core.csproj" />
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.Network\MyPC.LanPrintDoctor.Network.csproj" />
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.Firewall\MyPC.LanPrintDoctor.Firewall.csproj" />
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.Smb\MyPC.LanPrintDoctor.Smb.csproj" />
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.Printing\MyPC.LanPrintDoctor.Printing.csproj" />
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.ShaPrint\MyPC.LanPrintDoctor.ShaPrint.csproj" />
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.Repair\MyPC.LanPrintDoctor.Repair.csproj" />
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.Reports\MyPC.LanPrintDoctor.Reports.csproj" />
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.Platform\MyPC.LanPrintDoctor.Platform.csproj" />
+  </ItemGroup>
+</Project>

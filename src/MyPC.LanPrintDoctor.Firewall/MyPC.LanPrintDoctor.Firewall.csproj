@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>MyPC.LanPrintDoctor.Firewall</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.Abstractions\MyPC.LanPrintDoctor.Abstractions.csproj" />
+    <ProjectReference Include="..\MyPC.LanPrintDoctor.Core\MyPC.LanPrintDoctor.Core.csproj" />
+  </ItemGroup>
+</Project>
