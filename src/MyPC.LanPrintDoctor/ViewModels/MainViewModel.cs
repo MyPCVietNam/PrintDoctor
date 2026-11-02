@@ -1,10 +1,13 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows;
-using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.Network;
@@ -14,6 +17,8 @@ using MyPC.LanPrintDoctor.Core.Compare;
 using MyPC.LanPrintDoctor.Core.Engine;
 using MyPC.LanPrintDoctor.Core.Models;
 using MyPC.LanPrintDoctor.Core.Orchestration;
+using MyPC.LanPrintDoctor.Core.Ui;
+using MyPC.LanPrintDoctor.Platform.Logging;
 using MyPC.LanPrintDoctor.Platform.Windows;
 using MyPC.LanPrintDoctor.Repair;
 using MyPC.LanPrintDoctor.Repair.Operations;
@@ -25,31 +30,66 @@ public sealed class MainViewModel : INotifyPropertyChanged
 {
     private readonly ReportExporter _exporter = new() { ProcessRunner = new ProcessRunner() };
     private readonly ReportCompareService _compare = new();
+    private readonly AppLogWriter _log;
+    private readonly DispatcherTimer _elapsedTimer;
+    private readonly Stopwatch _scanWatch = new();
+    private CancellationTokenSource? _scanCts;
     private DiagnosticSnapshot? _lastSnapshot;
     private RepairJournal? _lastJournal;
+    private Exception? _lastError;
+    private string _lastErrorContext = "";
     private string _targetHost = "";
     private string _statusText = "";
+    private string _stageText = "";
     private string _sessionText = "";
     private string _detailHint = "";
+    private string _elapsedText = "";
+    private string _logPathText = "";
     private bool _isServerRole = true;
+    private bool _isDeepScan;
+    private bool _isBusy;
     private int _languageIndex;
+    private ScanUiPhase _phase = ScanUiPhase.Ready;
     private UiLabels _labels = UiLabels.Vietnamese;
+    private RepairChoiceRow? _selectedRepair;
 
     public MainViewModel()
     {
-        ScanCommand = new RelayCommand(async () => await ScanAsync(), () => !IsBusy);
-        ShowCausesCommand = new RelayCommand(() => ShowCauses(), () => _lastSnapshot is not null);
-        SafeRepairCommand = new RelayCommand(async () => await SafeRepairAsync(), () => _lastSnapshot is not null && !IsBusy);
-        ExportCommand = new RelayCommand(async () => await ExportAsync(), () => _lastSnapshot is not null && !IsBusy);
-        CompareCommand = new RelayCommand(() => CompareReports(), () => !IsBusy);
+        _log = new AppLogWriter(processRunner: new ProcessRunner());
+        LogPathText = "Logs: " + _log.LogDirectory;
+
+        ScanCommand = new AsyncRelayCommand(ScanAsync, () => !IsBusy);
+        CancelScanCommand = new RelayCommand(CancelScan, () => IsBusy && _scanCts is not null);
+        ShowCausesCommand = new RelayCommand(ShowCauses, () => _lastSnapshot is not null);
+        SafeRepairCommand = new AsyncRelayCommand(SafeRepairAsync, () => _lastSnapshot is not null && !IsBusy);
+        ExportCommand = new AsyncRelayCommand(ExportAsync, () => _lastSnapshot is not null && !IsBusy);
+        CompareCommand = new RelayCommand(CompareReports, () => !IsBusy);
+        CopyErrorCommand = new RelayCommand(CopyErrorDetails, () => _lastError is not null || Phase == ScanUiPhase.Failed);
+
+        _elapsedTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _elapsedTimer.Tick += (_, _) => RefreshElapsed();
+
+        VersionText = "v" + (Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+            ?? "1.2.2-HF2");
+
         StatusText = Labels.Ready;
+        StageText = "";
         DetailHint = Labels.DetailHint;
         Subtitle = Labels.Subtitle;
+        ModeIndicator = ScanModeRules.ModeIndicatorVi(true, false);
+        Phase = ScanUiPhase.Ready;
+        ShowEmptyFindings();
+        _log.WriteInfo("UI started " + VersionText);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    public string VersionText { get; }
     public string Subtitle { get; private set; } = "";
+    public string ModeIndicator { get; private set; } = "";
+
     public UiLabels Labels
     {
         get => _labels;
@@ -65,27 +105,85 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _languageIndex = value;
             Labels = value == 0 ? UiLabels.Vietnamese : UiLabels.English;
             Subtitle = Labels.Subtitle;
-            StatusText = Labels.Ready;
+            if (Phase is ScanUiPhase.Ready)
+                StatusText = Labels.Ready;
             DetailHint = Labels.DetailHint;
+            RefreshModeIndicator();
+            if (Findings.Count == 1 && Findings[0].Status == "—")
+                ShowEmptyFindings();
             OnPropertyChanged();
             OnPropertyChanged(nameof(Subtitle));
             OnPropertyChanged(nameof(StatusText));
             OnPropertyChanged(nameof(DetailHint));
             OnPropertyChanged(nameof(Labels));
+            RaiseCommands();
         }
     }
 
     public bool IsServerRole
     {
         get => _isServerRole;
-        set { _isServerRole = value; if (value) IsClientRole = false; OnPropertyChanged(); }
+        set
+        {
+            if (_isServerRole == value) return;
+            _isServerRole = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsClientRole));
+            OnPropertyChanged(nameof(TargetHostVisibility));
+            OnPropertyChanged(nameof(ServerLocalHintVisibility));
+            RefreshModeIndicator();
+        }
     }
 
     public bool IsClientRole
     {
         get => !_isServerRole;
-        set { if (value) { _isServerRole = false; OnPropertyChanged(nameof(IsServerRole)); } OnPropertyChanged(); }
+        set
+        {
+            if (value == !_isServerRole) return;
+            _isServerRole = !value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsServerRole));
+            OnPropertyChanged(nameof(TargetHostVisibility));
+            OnPropertyChanged(nameof(ServerLocalHintVisibility));
+            RefreshModeIndicator();
+        }
     }
+
+    public bool IsQuickScan
+    {
+        get => !_isDeepScan;
+        set
+        {
+            if (value == !_isDeepScan) return;
+            _isDeepScan = !value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsDeepScan));
+            RefreshModeIndicator();
+        }
+    }
+
+    public bool IsDeepScan
+    {
+        get => _isDeepScan;
+        set
+        {
+            if (_isDeepScan == value) return;
+            _isDeepScan = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsQuickScan));
+            RefreshModeIndicator();
+        }
+    }
+
+    public Visibility TargetHostVisibility
+        => IsClientRole ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility ServerLocalHintVisibility
+        => IsServerRole ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility ProgressVisibility
+        => IsBusy ? Visibility.Visible : Visibility.Collapsed;
 
     public string TargetHost
     {
@@ -97,6 +195,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         get => _statusText;
         set { _statusText = value; OnPropertyChanged(); }
+    }
+
+    public string StageText
+    {
+        get => _stageText;
+        set { _stageText = value; OnPropertyChanged(); }
     }
 
     public string SessionText
@@ -111,38 +215,142 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set { _detailHint = value; OnPropertyChanged(); }
     }
 
-    public bool IsBusy { get; private set; }
+    public string ElapsedText
+    {
+        get => _elapsedText;
+        set { _elapsedText = value; OnPropertyChanged(); }
+    }
+
+    public string LogPathText
+    {
+        get => _logPathText;
+        set { _logPathText = value; OnPropertyChanged(); }
+    }
+
+    public ScanUiPhase Phase
+    {
+        get => _phase;
+        private set
+        {
+            _phase = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(PhaseCode));
+            OnPropertyChanged(nameof(PhaseBrush));
+            OnPropertyChanged(nameof(StatusBrush));
+            RaiseCommands();
+        }
+    }
+
+    public string PhaseCode => ScanModeRules.PhaseLabelVi(Phase);
+
+    public Brush PhaseBrush => Phase switch
+    {
+        ScanUiPhase.Ready => BrushFrom(ThemePalette.TextMuted),
+        ScanUiPhase.Validating or ScanUiPhase.Scanning => BrushFrom(ThemePalette.WarnAmber),
+        ScanUiPhase.Completed => BrushFrom(ThemePalette.PassGreen),
+        ScanUiPhase.Failed => BrushFrom(ThemePalette.FailRed),
+        ScanUiPhase.Cancelled => BrushFrom(ThemePalette.AccentGold),
+        _ => BrushFrom(ThemePalette.TextMuted)
+    };
+
+    public Brush StatusBrush => Phase switch
+    {
+        ScanUiPhase.Failed => BrushFrom(ThemePalette.FailRed),
+        ScanUiPhase.Completed => BrushFrom(ThemePalette.PassGreen),
+        ScanUiPhase.Scanning or ScanUiPhase.Validating => BrushFrom(ThemePalette.WarnAmber),
+        ScanUiPhase.Cancelled => BrushFrom(ThemePalette.AccentGold),
+        _ => BrushFrom(ThemePalette.TextMuted)
+    };
+
+    public bool IsBusy
+    {
+        get => _isBusy;
+        private set
+        {
+            if (_isBusy == value) return;
+            _isBusy = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ProgressVisibility));
+            RaiseCommands();
+        }
+    }
 
     public ObservableCollection<FindingRow> Findings { get; } = new();
     public ObservableCollection<RepairChoiceRow> AvailableRepairs { get; } = new();
-    private RepairChoiceRow? _selectedRepair;
+
     public RepairChoiceRow? SelectedRepair
     {
         get => _selectedRepair;
         set { _selectedRepair = value; OnPropertyChanged(); }
     }
 
-    public ICommand ScanCommand { get; }
-    public ICommand ShowCausesCommand { get; }
-    public ICommand SafeRepairCommand { get; }
-    public ICommand ExportCommand { get; }
-    public ICommand CompareCommand { get; }
+    public AsyncRelayCommand ScanCommand { get; }
+    public RelayCommand CancelScanCommand { get; }
+    public RelayCommand ShowCausesCommand { get; }
+    public AsyncRelayCommand SafeRepairCommand { get; }
+    public AsyncRelayCommand ExportCommand { get; }
+    public RelayCommand CompareCommand { get; }
+    public RelayCommand CopyErrorCommand { get; }
 
     private async Task ScanAsync()
     {
+        _lastError = null;
+        _lastErrorContext = "Scan";
+        Phase = ScanUiPhase.Validating;
+        StageText = Labels.Role + "...";
+
+        string? target = null;
         if (IsClientRole)
         {
+            if (string.IsNullOrWhiteSpace(TargetHost))
+            {
+                Phase = ScanUiPhase.Failed;
+                StatusText = Labels.TargetRequired;
+                StageText = "";
+                _lastError = new InvalidOperationException(Labels.TargetRequired);
+                _log.WriteError("Scan validation: target required in client mode");
+                return;
+            }
             if (!InputValidator.TryParseHost(TargetHost, out var host))
             {
+                Phase = ScanUiPhase.Failed;
                 StatusText = Labels.InvalidHost;
+                StageText = "";
+                _lastError = new ArgumentException(Labels.InvalidHost);
+                _log.WriteError("Scan validation: invalid host " + TargetHost);
                 return;
             }
             TargetHost = host;
+            target = host;
+        }
+        else
+        {
+            // Server mode = local only (Gate E)
+            target = null;
+            TargetHost = "";
         }
 
+        _scanCts?.Dispose();
+        _scanCts = new CancellationTokenSource();
+        var ct = _scanCts.Token;
+
         IsBusy = true;
+        Phase = ScanUiPhase.Scanning;
         StatusText = Labels.Scanning;
         Findings.Clear();
+        AvailableRepairs.Clear();
+        SelectedRepair = null;
+        _scanWatch.Restart();
+        _elapsedTimer.Start();
+        RefreshElapsed();
+        _log.WriteInfo($"Scan start role={(IsServerRole ? "Server" : "Client")} deep={IsDeepScan} target={target ?? "(local)"}");
+
+        var progress = new Progress<string>(stage =>
+        {
+            StageText = stage;
+            StatusText = Labels.Scanning + " " + stage;
+        });
+
         try
         {
             var (net, fw, svc, smb, prn, sha, _, _) = PlatformComposition.CreateWindowsStack();
@@ -150,37 +358,30 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var snap = await orch.RunAsync(new DiagnosticRequest
             {
                 Role = IsServerRole ? MachineRole.Server : MachineRole.Client,
-                TargetHost = string.IsNullOrWhiteSpace(TargetHost) ? null : TargetHost,
-                DeepScan = true
-            });
+                TargetHost = target,
+                DeepScan = IsDeepScan
+            }, progress, ct);
+
+            ct.ThrowIfCancellationRequested();
+
             _lastSnapshot = snap;
             SessionText = $"Session: {snap.SessionId}";
             foreach (var f in snap.Findings.OrderByDescending(x => x.Severity))
             {
-                Findings.Add(new FindingRow
-                {
-                    Status = f.Status.ToString().ToUpperInvariant(),
-                    Title = $"{f.Id} — {f.Title}",
-                    Evidence = f.Evidence
-                });
+                Findings.Add(FindingRow.From(f.Status.ToString(), $"{f.Id} — {f.Title}", f.Evidence));
             }
 
-            // P2 network root-cause cases (A/B/C) — evidence-based, no single-cause default
             foreach (var rc in new NetworkRootCauseEngine().Analyze(snap))
             {
-                Findings.Add(new FindingRow
-                {
-                    Status = rc.Status.ToString().ToUpperInvariant(),
-                    Title = $"{rc.CaseId} — {rc.Title}",
-                    Evidence = (rc.Evidence ?? "") + " | " + (rc.RecommendedAction ?? "")
+                Findings.Add(FindingRow.From(
+                    rc.Status.ToString(),
+                    $"{rc.CaseId} — {rc.Title}",
+                    (rc.Evidence ?? "") + " | " + (rc.RecommendedAction ?? "")
                         + $" | evidence={rc.EvidenceLevel}"
                         + (rc.InfrastructureActionRequired ? " | INFRASTRUCTURE_ACTION_REQUIRED" : "")
-                        + (rc.InfrastructureInvestigationRecommended ? " | INFRASTRUCTURE_INVESTIGATION_RECOMMENDED" : "")
-                });
+                        + (rc.InfrastructureInvestigationRecommended ? " | INFRASTRUCTURE_INVESTIGATION_RECOMMENDED" : "")));
             }
 
-            AvailableRepairs.Clear();
-            SelectedRepair = null;
             foreach (var f in snap.Findings
                          .Where(x => !string.IsNullOrWhiteSpace(x.RepairId)
                                      && x.RepairOwner is not RepairOwnerRole.ServerActionRequired and not RepairOwnerRole.None)
@@ -200,24 +401,79 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             if (Findings.Count == 0)
             {
-                Findings.Add(new FindingRow
-                {
-                    Status = "PASS",
-                    Title = Labels.NoCritical,
-                    Evidence = Labels.NoCriticalEvidence
-                });
+                Findings.Add(FindingRow.From("PASS", Labels.NoCritical, Labels.NoCriticalEvidence));
             }
 
-            StatusText = string.Format(Labels.ScanDone, snap.Findings.Count);
+            _scanWatch.Stop();
+            Phase = ScanUiPhase.Completed;
+            StageText = IsDeepScan ? "DeepScan COMPLETED" : "QuickScan COMPLETED";
+            StatusText = string.Format(Labels.ScanDone, snap.Findings.Count, _scanWatch.Elapsed.TotalSeconds);
+            _log.WriteInfo($"Scan completed findings={snap.Findings.Count} elapsed={_scanWatch.Elapsed.TotalSeconds:0.0}s");
+        }
+        catch (OperationCanceledException)
+        {
+            Phase = ScanUiPhase.Cancelled;
+            StatusText = Labels.ScanCancelled;
+            StageText = "CANCELLED";
+            _log.WriteInfo("Scan cancelled by user");
+            if (Findings.Count == 0)
+                ShowEmptyFindings();
         }
         catch (Exception ex)
         {
+            // Never swallow — surface + log (Gate C/F). Do NOT auto-repair.
+            _lastError = ex;
+            _lastErrorContext = "Scan";
+            Phase = ScanUiPhase.Failed;
             StatusText = Labels.ScanFailed + ": " + ex.Message;
+            StageText = "FAILED — " + ex.GetType().Name;
+            var path = _log.WriteError("Scan failed", ex);
+            LogPathText = "Logs: " + path;
+            if (Findings.Count == 0)
+            {
+                Findings.Add(FindingRow.From("FAIL", Labels.ScanFailed, ex.Message));
+            }
         }
         finally
         {
+            _elapsedTimer.Stop();
+            RefreshElapsed();
             IsBusy = false;
-            CommandManager.InvalidateRequerySuggested();
+            _scanCts?.Dispose();
+            _scanCts = null;
+            RaiseCommands();
+        }
+    }
+
+    private void CancelScan()
+    {
+        try { _scanCts?.Cancel(); }
+        catch (ObjectDisposedException) { /* ignore */ }
+        StageText = "Cancelling...";
+    }
+
+    private void ShowEmptyFindings()
+    {
+        Findings.Clear();
+        Findings.Add(FindingRow.From("—", Labels.EmptyFindings, ""));
+    }
+
+    private void CopyErrorDetails()
+    {
+        var details = _log.FormatErrorDetails(
+            _lastErrorContext,
+            _lastError,
+            extra: $"Phase={PhaseCode}\nStatus={StatusText}\nStage={StageText}\nSession={SessionText}");
+        try
+        {
+            Clipboard.SetText(details);
+            StatusText = Labels.ErrorCopied;
+            _log.WriteInfo("Copied error details to clipboard");
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Clipboard failed: " + ex.Message;
+            _log.WriteError("Clipboard copy failed", ex);
         }
     }
 
@@ -284,14 +540,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 StatusText = "No Public adapters available for profile repair.";
                 return;
             }
-            // Explicit selection required — never silently pick first NIC when multiple/VPN present
             var lines = candidates.Select((a, i) =>
                 $"{i + 1}) IfIndex={a.InterfaceIndex} Alias={a.Name} IP={string.Join(",", a.IPv4Addresses)} GW={a.DefaultGateway} Cat={a.Category} Metric={a.InterfaceMetric}").ToList();
             var prompt = "Chọn interface (nhập số 1.." + candidates.Count + ") — multi-NIC/VPN bắt buộc chọn đúng:\n\n"
                          + string.Join("\n", lines)
                          + "\n\nCancel = hủy. OK sau khi ghi nhớ số; hộp nhập phía sau.";
             MessageBox.Show(prompt, Labels.SafeRepair, MessageBoxButton.OK, MessageBoxImage.Information);
-            // Use single candidate only when exactly one Public NIC; otherwise require index via InputBox substitute
             if (candidates.Count == 1)
             {
                 selectedIf = candidates[0].InterfaceIndex;
@@ -299,7 +553,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
             else
             {
-                // WPF has no InputBox — present Yes/No per candidate until one chosen
                 selectedIf = null;
                 foreach (var (a, idx) in candidates.Select((a, i) => (a, i)))
                 {
@@ -383,8 +636,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             var journalDir = Path.Combine(journalsRoot, _lastSnapshot.SessionId);
             _lastJournal = new RepairJournal(journalDir);
-            // Recovery is re-checked inside RepairExecutor AFTER the machine-wide lock is held.
-            // Early UX hint only — executor is authoritative and uses lockDirectory=null (ProgramData).
             if (_lastJournal.GetRecoveryState() is RepairRecoveryState.UncertainState
                 or RepairRecoveryState.Incomplete
                 or RepairRecoveryState.CorruptJournal)
@@ -423,12 +674,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         catch (Exception ex)
         {
+            _lastError = ex;
+            _lastErrorContext = "SafeRepair";
             StatusText = Labels.RepairFailed + ": " + ex.Message;
+            _log.WriteError("SafeRepair failed", ex);
         }
         finally
         {
             IsBusy = false;
-            CommandManager.InvalidateRequerySuggested();
+            RaiseCommands();
         }
     }
 
@@ -485,14 +739,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var result = _compare.CompareFiles(serverDlg.FileName, clientDlg.FileNames);
             Findings.Clear();
             foreach (var f in result.Findings)
-            {
-                Findings.Add(new FindingRow
-                {
-                    Status = f.Status.ToString().ToUpperInvariant(),
-                    Title = $"{f.Id} — {f.Title}",
-                    Evidence = f.Evidence
-                });
-            }
+                Findings.Add(FindingRow.From(f.Status.ToString(), $"{f.Id} — {f.Title}", f.Evidence));
 
             var sb = new StringBuilder();
             sb.AppendLine($"HasValidEvidence={result.HasValidEvidence}");
@@ -501,13 +748,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (result.InfrastructureHints.Count > 0) sb.AppendLine("INFRA: " + string.Join("; ", result.InfrastructureHints));
             if (result.InsufficientEvidence.Count > 0) sb.AppendLine("INSUFFICIENT: " + string.Join("; ", result.InsufficientEvidence));
             if (Findings.Count == 0 && !result.HasValidEvidence)
-                Findings.Add(new FindingRow { Status = "UNKNOWN", Title = "Insufficient evidence", Evidence = sb.ToString() });
+                Findings.Add(FindingRow.From("UNKNOWN", "Insufficient evidence", sb.ToString()));
             StatusText = sb.ToString();
             MessageBox.Show(sb.ToString(), Labels.Compare, MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
+            _lastError = ex;
+            _lastErrorContext = "Compare";
             StatusText = Labels.CompareFailed + ": " + ex.Message;
+            _log.WriteError("Compare failed", ex);
             MessageBox.Show(StatusText, Labels.Compare, MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -525,8 +775,48 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         catch (Exception ex)
         {
+            _lastError = ex;
+            _lastErrorContext = "Export";
             StatusText = Labels.ExportFailed + ": " + ex.Message;
+            _log.WriteError("Export failed", ex);
         }
+    }
+
+    private void RefreshModeIndicator()
+    {
+        ModeIndicator = LanguageIndex == 0
+            ? ScanModeRules.ModeIndicatorVi(IsServerRole, IsDeepScan)
+            : (IsServerRole
+                ? (IsDeepScan ? "Mode: SERVER · DEEP (local)" : "Mode: SERVER · QUICK (local)")
+                : (IsDeepScan ? "Mode: CLIENT · DEEP → server IP" : "Mode: CLIENT · QUICK → server IP"));
+        OnPropertyChanged(nameof(ModeIndicator));
+    }
+
+    private void RefreshElapsed()
+    {
+        if (_scanWatch.IsRunning || _scanWatch.ElapsedMilliseconds > 0)
+            ElapsedText = $"{_scanWatch.Elapsed.TotalSeconds:0.0}s";
+        else
+            ElapsedText = "";
+    }
+
+    private void RaiseCommands()
+    {
+        ScanCommand.RaiseCanExecuteChanged();
+        CancelScanCommand.RaiseCanExecuteChanged();
+        ShowCausesCommand.RaiseCanExecuteChanged();
+        SafeRepairCommand.RaiseCanExecuteChanged();
+        ExportCommand.RaiseCanExecuteChanged();
+        CompareCommand.RaiseCanExecuteChanged();
+        CopyErrorCommand.RaiseCanExecuteChanged();
+    }
+
+    private static SolidColorBrush BrushFrom(string hex)
+    {
+        var (r, g, b) = ThemePalette.ParseRgb(hex);
+        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
     }
 
     private void OnPropertyChanged([CallerMemberName] string? name = null)
@@ -538,6 +828,36 @@ public sealed class FindingRow
     public string Status { get; init; } = "";
     public string Title { get; init; } = "";
     public string Evidence { get; init; } = "";
+    public Brush StatusBrush { get; init; } = Brushes.White;
+
+    public static FindingRow From(string status, string title, string evidence)
+    {
+        var normalized = ScanModeRules.NormalizeFindingStatus(status);
+        if (status == "—") normalized = "—";
+        var brush = normalized switch
+        {
+            "PASS" => Brush("#3DDC97"),
+            "FAIL" => Brush("#FF7474"),
+            "WARN" => Brush("#F1C453"),
+            "UNKNOWN" => Brush("#BBC5D3"),
+            _ => Brush("#BBC5D3")
+        };
+        return new FindingRow
+        {
+            Status = normalized == "—" ? "—" : normalized,
+            Title = title,
+            Evidence = evidence,
+            StatusBrush = brush
+        };
+    }
+
+    private static SolidColorBrush Brush(string hex)
+    {
+        var (r, g, b) = ThemePalette.ParseRgb(hex);
+        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
 }
 
 public sealed class RepairChoiceRow
@@ -547,160 +867,4 @@ public sealed class RepairChoiceRow
     public string Evidence { get; init; } = "";
     public string Owner { get; init; } = "";
     public override string ToString() => $"{RepairId} — {Title}";
-}
-
-public sealed class UiLabels
-{
-    public string Subtitle { get; init; } = "";
-    public string Role { get; init; } = "";
-    public string Server { get; init; } = "";
-    public string Client { get; init; } = "";
-    public string TargetIp { get; init; } = "";
-    public string Scan { get; init; } = "";
-    public string Causes { get; init; } = "";
-    public string SafeRepair { get; init; } = "";
-    public string Export { get; init; } = "";
-    public string Compare { get; init; } = "";
-    public string Findings { get; init; } = "";
-    public string Ready { get; init; } = "";
-    public string Scanning { get; init; } = "";
-    public string ScanDone { get; init; } = "";
-    public string ScanFailed { get; init; } = "";
-    public string InvalidHost { get; init; } = "";
-    public string NoCritical { get; init; } = "";
-    public string NoCriticalEvidence { get; init; } = "";
-    public string DetailHint { get; init; } = "";
-    public string Evidence { get; init; } = "";
-    public string Actions { get; init; } = "";
-    public string NoRepair { get; init; } = "";
-    public string ConfirmRepair { get; init; } = "";
-    public string RepairCancelled { get; init; } = "";
-    public string NeedAdmin { get; init; } = "";
-    public string UnverifiedSuccess { get; init; } = "";
-    public string LocalConfigVerified { get; init; } = "";
-    public string AlreadyConfigured { get; init; } = "";
-    public string RepairFailed { get; init; } = "";
-    public string Exported { get; init; } = "";
-    public string ExportFailed { get; init; } = "";
-    public string CompareHint { get; init; } = "";
-    public string CompareServerFile { get; init; } = "";
-    public string CompareClientFiles { get; init; } = "";
-    public string CompareFailed { get; init; } = "";
-    public string Irreversible { get; init; } = "";
-    public string RedactPrompt { get; init; } = "";
-
-    public static UiLabels Vietnamese { get; } = new()
-    {
-        Subtitle = "Chẩn đoán LAN & chia sẻ máy in — mặc định chỉ đọc, sửa có kiểm soát.",
-        Role = "Vai trò máy",
-        Server = "Máy chủ",
-        Client = "Máy trạm",
-        TargetIp = "IP đối tượng (máy chủ)",
-        Scan = "KIỂM TRA",
-        Causes = "XEM NGUYÊN NHÂN",
-        SafeRepair = "SỬA AN TOÀN",
-        Export = "XUẤT BÁO CÁO",
-        Compare = "SO SÁNH BÁO CÁO",
-        Findings = "Kết quả",
-        Ready = "Sẵn sàng (FIELD PILOT). Chưa thay đổi hệ thống. LOCAL_CONFIG ≠ E2E ≠ PHYSICAL_PRINT.",
-        Scanning = "Đang chẩn đoán (read-only)...",
-        ScanDone = "Hoàn tất. {0} phát hiện.",
-        ScanFailed = "Quét thất bại",
-        InvalidHost = "IP/hostname không hợp lệ.",
-        NoCritical = "Không có phát hiện nghiêm trọng từ rule engine",
-        NoCriticalEvidence = "Vẫn xuất báo cáo để đối chiếu server/client.",
-        DetailHint = "Field pilot: Server SCAN→SERVER-BEFORE → Client SCAN→CLIENT-BEFORE → Compare → một repair có consent → AFTER → hỏi in thật. Switch/VLAN/IP-conflict: không sửa Windows suy đoán. Chi tiết trong ZIP.",
-        Evidence = "Bằng chứng",
-        Actions = "Đề xuất",
-        NoRepair = "Không có repair hợp lệ cho các phát hiện hiện tại.",
-        ConfirmRepair = "Xác nhận sửa '{0}' — {1}?\nBackup trước, verify sau, rollback nếu thất bại.",
-        RepairCancelled = "Đã hủy sửa chữa.",
-        NeedAdmin = "Cần quyền Administrator (UAC) để sửa.",
-        UnverifiedSuccess = "Không tuyên bố SUCCESS khi chưa verify.",
-        LocalConfigVerified = "LOCAL_CONFIG_VERIFIED — chờ xác minh client (WAITING_FOR_CLIENT_VERIFICATION). Chưa tuyên bố FIXED.",
-        AlreadyConfigured = "ALREADY_CONFIGURED — cấu hình đã đúng, không thay đổi hệ thống.",
-        RepairFailed = "Sửa thất bại",
-        Exported = "Đã xuất",
-        ExportFailed = "Xuất báo cáo thất bại",
-        CompareHint = "Chọn báo cáo server và client (ZIP/JSON) để so sánh thật.",
-        CompareServerFile = "Chọn báo cáo MÁY CHỦ",
-        CompareClientFiles = "Chọn báo cáo MÁY TRẠM (tối đa nhiều file)",
-        CompareFailed = "So sánh thất bại",
-        Irreversible = "Thao tác này không thể rollback tự động.",
-        RedactPrompt = "Ẩn IP/MAC/tên máy trong báo cáo?"
-    };
-
-    public static UiLabels English { get; } = new()
-    {
-        Subtitle = "LAN & printer-share diagnostics — read-only by default, controlled repair.",
-        Role = "Machine role",
-        Server = "Server",
-        Client = "Client",
-        TargetIp = "Target host/IP (server)",
-        Scan = "SCAN",
-        Causes = "VIEW CAUSES",
-        SafeRepair = "SAFE REPAIR",
-        Export = "EXPORT REPORT",
-        Compare = "COMPARE REPORTS",
-        Findings = "Findings",
-        Ready = "Ready (FIELD PILOT). No system changes yet. LOCAL_CONFIG ≠ E2E ≠ PHYSICAL_PRINT.",
-        Scanning = "Running diagnostics (read-only)...",
-        ScanDone = "Done. {0} finding(s).",
-        ScanFailed = "Scan failed",
-        InvalidHost = "Invalid IP/hostname.",
-        NoCritical = "No critical rule-engine findings",
-        NoCriticalEvidence = "Still export a report for server/client correlation.",
-        DetailHint = "Field pilot: Server SCAN→SERVER-BEFORE → Client SCAN→CLIENT-BEFORE → Compare → one consented repair → AFTER → ask physical print. Switch/VLAN/IP-conflict: no speculative Windows repair. Full detail in ZIP.",
-        Evidence = "Evidence",
-        Actions = "Actions",
-        NoRepair = "No eligible repair for current findings.",
-        ConfirmRepair = "Confirm repair '{0}' — {1}?\nBackup first, verify after, rollback on failure.",
-        RepairCancelled = "Repair cancelled.",
-        NeedAdmin = "Administrator (UAC) required for repair.",
-        UnverifiedSuccess = "Never claim SUCCESS without verification.",
-        LocalConfigVerified = "LOCAL_CONFIG_VERIFIED — WAITING_FOR_CLIENT_VERIFICATION. Do not claim FIXED.",
-        AlreadyConfigured = "ALREADY_CONFIGURED — no system change.",
-        RepairFailed = "Repair failed",
-        Exported = "Exported",
-        ExportFailed = "Export failed",
-        CompareHint = "Pick server and client report ZIP/JSON files for a real comparison.",
-        CompareServerFile = "Select SERVER report",
-        CompareClientFiles = "Select CLIENT reports (multi-select)",
-        CompareFailed = "Compare failed",
-        Irreversible = "This operation cannot be automatically rolled back.",
-        RedactPrompt = "Redact IP/MAC/machine name in the report?"
-    };
-}
-
-public sealed class RelayCommand : ICommand
-{
-    private readonly Func<Task>? _async;
-    private readonly Action? _sync;
-    private readonly Func<bool>? _can;
-
-    public RelayCommand(Func<Task> asyncExecute, Func<bool>? can = null)
-    {
-        _async = asyncExecute;
-        _can = can;
-    }
-
-    public RelayCommand(Action execute, Func<bool>? can = null)
-    {
-        _sync = execute;
-        _can = can;
-    }
-
-    public event EventHandler? CanExecuteChanged
-    {
-        add => CommandManager.RequerySuggested += value;
-        remove => CommandManager.RequerySuggested -= value;
-    }
-
-    public bool CanExecute(object? parameter) => _can?.Invoke() ?? true;
-
-    public async void Execute(object? parameter)
-    {
-        if (_sync is not null) { _sync(); return; }
-        if (_async is not null) await _async();
-    }
 }

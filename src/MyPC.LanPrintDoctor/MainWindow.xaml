@@ -4,35 +4,52 @@
         Title="MyPC LAN &amp; Print Doctor"
         Height="720" Width="1100"
         MinHeight="640" MinWidth="960"
-        WindowStartupLocation="CenterScreen">
-  <Grid>
+        MaxWidth="1920" MaxHeight="1080"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BrushBgDeep}"
+        Foreground="{StaticResource BrushText}"
+        FontFamily="{StaticResource UiFont}">
+  <Grid Margin="0">
     <Grid.Background>
       <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-        <GradientStop Color="#FF0B0D10" Offset="0"/>
+        <GradientStop Color="#FF0B0F16" Offset="0"/>
         <GradientStop Color="#FF121826" Offset="0.55"/>
-        <GradientStop Color="#FF1A1520" Offset="1"/>
+        <GradientStop Color="#FF171D28" Offset="1"/>
       </LinearGradientBrush>
     </Grid.Background>
 
     <Grid.RowDefinitions>
+      <!-- Header -->
       <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"/>
+      <!-- Connection + mode -->
+      <RowDefinition Height="Auto"/>
+      <!-- Persistent status (never clipped) -->
+      <RowDefinition Height="Auto"/>
+      <!-- Results + repair -->
+      <RowDefinition Height="*" MinHeight="220"/>
+      <!-- Bottom actions -->
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <!-- Brand hero strip -->
-    <Border Grid.Row="0" Padding="28,22,28,12">
+    <!-- ===== HEADER ===== -->
+    <Border Grid.Row="0" Padding="24,18,24,10">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
         <StackPanel>
-          <TextBlock Text="MyPC LAN &amp; Print Doctor" FontSize="28" FontWeight="Bold" Foreground="{StaticResource BrushAccent}"/>
-          <TextBlock Text="{Binding Subtitle}" Margin="0,6,0,0" Foreground="{StaticResource BrushMuted}" TextWrapping="Wrap"/>
+          <TextBlock Text="MyPC LAN &amp; Print Doctor"
+                     FontSize="26" FontWeight="Bold"
+                     Foreground="{StaticResource BrushAccent}"/>
+          <TextBlock Text="{Binding Subtitle}" Margin="0,4,0,0"
+                     Style="{StaticResource MutedTextStyle}" MaxHeight="40"/>
         </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-          <ComboBox Width="110" SelectedIndex="{Binding LanguageIndex}" Margin="0,0,8,0">
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+          <TextBlock Text="{Binding VersionText}" Style="{StaticResource MutedTextStyle}"
+                     VerticalAlignment="Center" Margin="0,0,12,0"/>
+          <ComboBox Width="120" SelectedIndex="{Binding LanguageIndex}"
+                    ToolTip="Ngôn ngữ / Language">
             <ComboBoxItem Content="Tiếng Việt"/>
             <ComboBoxItem Content="English"/>
           </ComboBox>
@@ -40,63 +57,116 @@
       </Grid>
     </Border>
 
-    <Grid Grid.Row="1" Margin="28,8,28,8">
+    <!-- ===== CONNECTION / MODE ===== -->
+    <Border Grid.Row="1" Margin="24,0,24,8" Background="{StaticResource BrushBgPanel}"
+            CornerRadius="10" Padding="16,14">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" MinWidth="280"/>
+          <ColumnDefinition Width="16"/>
+          <ColumnDefinition Width="*" MinWidth="280"/>
+        </Grid.ColumnDefinitions>
+
+        <StackPanel Grid.Column="0">
+          <TextBlock Text="{Binding Labels.Role}" Style="{StaticResource SectionTitleStyle}"/>
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+            <RadioButton Content="{Binding Labels.Server}" IsChecked="{Binding IsServerRole}"
+                         GroupName="Role" Foreground="{StaticResource BrushText}"/>
+            <RadioButton Content="{Binding Labels.Client}" IsChecked="{Binding IsClientRole}"
+                         GroupName="Role" Foreground="{StaticResource BrushText}"/>
+          </StackPanel>
+          <TextBlock Text="{Binding ModeIndicator}" Style="{StaticResource MutedTextStyle}" Margin="0,0,0,10"/>
+
+          <TextBlock Text="{Binding Labels.ScanDepth}" Style="{StaticResource SectionTitleStyle}"/>
+          <StackPanel Orientation="Horizontal">
+            <RadioButton Content="{Binding Labels.QuickScan}" IsChecked="{Binding IsQuickScan}"
+                         GroupName="Depth" Foreground="{StaticResource BrushText}"
+                         ToolTip="Quét nhanh kết nối (~10–20s)"/>
+            <RadioButton Content="{Binding Labels.DeepScan}" IsChecked="{Binding IsDeepScan}"
+                         GroupName="Depth" Foreground="{StaticResource BrushText}"
+                         ToolTip="Quét sâu đầy đủ (routes, printers, third-party)"/>
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel Grid.Column="2">
+          <TextBlock Text="{Binding Labels.TargetIp}" Style="{StaticResource SectionTitleStyle}"
+                     Visibility="{Binding TargetHostVisibility}"/>
+          <TextBox Text="{Binding TargetHost, UpdateSourceTrigger=PropertyChanged}"
+                   Visibility="{Binding TargetHostVisibility}"
+                   Margin="0,0,0,10"
+                   ToolTip="IP hoặc hostname máy chủ in (bắt buộc ở chế độ Máy trạm)"/>
+          <TextBlock Text="{Binding Labels.ServerLocalHint}" Style="{StaticResource MutedTextStyle}"
+                     Visibility="{Binding ServerLocalHintVisibility}"/>
+          <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+            <Button Content="{Binding Labels.Scan}" Style="{StaticResource PrimaryButton}"
+                    Command="{Binding ScanCommand}" Margin="0,0,8,0" MinWidth="140"/>
+            <Button Content="{Binding Labels.Cancel}" Style="{StaticResource DangerGhostButton}"
+                    Command="{Binding CancelScanCommand}" Margin="0,0,8,0" MinWidth="100"/>
+            <Button Content="{Binding Labels.Causes}" Style="{StaticResource GhostButton}"
+                    Command="{Binding ShowCausesCommand}" MinWidth="140"/>
+          </StackPanel>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- ===== PERSISTENT STATUS (Gate B) — always visible, never in clipped stack ===== -->
+    <Border Grid.Row="2" Margin="24,0,24,8" Background="{StaticResource BrushBgElevated}"
+            CornerRadius="8" Padding="14,10" MinHeight="72">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <DockPanel Grid.Row="0" LastChildFill="True">
+          <Border DockPanel.Dock="Left" Background="{Binding PhaseBrush}"
+                  CornerRadius="4" Padding="8,3" Margin="0,0,10,0" VerticalAlignment="Center">
+            <TextBlock Text="{Binding PhaseCode}" FontWeight="Bold" FontSize="11"
+                       Foreground="{StaticResource BrushOnAccent}"/>
+          </Border>
+          <TextBlock Text="{Binding ElapsedText}" DockPanel.Dock="Right"
+                     Style="{StaticResource MutedTextStyle}" VerticalAlignment="Center" Margin="10,0,0,0"/>
+          <TextBlock Text="{Binding StatusText}" Style="{StaticResource StatusTextStyle}"
+                     Foreground="{Binding StatusBrush}" VerticalAlignment="Center"/>
+        </DockPanel>
+        <TextBlock Grid.Row="1" Text="{Binding StageText}" Style="{StaticResource MutedTextStyle}"
+                   Margin="0,6,0,4"/>
+        <ProgressBar Grid.Row="2" IsIndeterminate="{Binding IsBusy}"
+                     Visibility="{Binding ProgressVisibility}" Height="6"/>
+      </Grid>
+    </Border>
+
+    <!-- ===== RESULTS + REPAIR ===== -->
+    <Grid Grid.Row="3" Margin="24,0,24,8">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="320"/>
-        <ColumnDefinition Width="16"/>
-        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="*" MinWidth="360"/>
+        <ColumnDefinition Width="14"/>
+        <ColumnDefinition Width="300" MinWidth="260"/>
       </Grid.ColumnDefinitions>
 
-      <!-- Controls -->
-      <Border Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="18">
-        <StackPanel>
-          <TextBlock Text="{Binding Labels.Role}" FontWeight="SemiBold" Margin="0,0,0,8"/>
-          <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
-            <RadioButton Content="{Binding Labels.Server}" IsChecked="{Binding IsServerRole}" Margin="0,0,16,0" Foreground="{StaticResource BrushText}"/>
-            <RadioButton Content="{Binding Labels.Client}" IsChecked="{Binding IsClientRole}" Foreground="{StaticResource BrushText}"/>
-          </StackPanel>
-
-          <TextBlock Text="{Binding Labels.TargetIp}" FontWeight="SemiBold" Margin="0,0,0,6"/>
-          <TextBox Text="{Binding TargetHost, UpdateSourceTrigger=PropertyChanged}" Padding="10,8" Margin="0,0,0,14"
-                   Background="{StaticResource BrushBgElevated}" Foreground="{StaticResource BrushText}" BorderBrush="#FF2A3344"/>
-
-          <Button Content="{Binding Labels.Scan}" Style="{StaticResource PrimaryButton}" Command="{Binding ScanCommand}" Margin="0,0,0,8"/>
-          <Button Content="{Binding Labels.Causes}" Style="{StaticResource GhostButton}" Command="{Binding ShowCausesCommand}" Margin="0,0,0,8"/>
-
-          <TextBlock Text="SỬA LỖI (chọn một)" FontWeight="SemiBold" Margin="0,4,0,6"/>
-          <ListBox ItemsSource="{Binding AvailableRepairs}" SelectedItem="{Binding SelectedRepair}"
-                   Height="120" Margin="0,0,0,8"
-                   Background="{StaticResource BrushBgElevated}" BorderBrush="#FF2A3344"
-                   DisplayMemberPath="."
-                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
-          <Button Content="{Binding Labels.SafeRepair}" Style="{StaticResource GhostButton}" Command="{Binding SafeRepairCommand}" Margin="0,0,0,8"/>
-          <Button Content="{Binding Labels.Export}" Style="{StaticResource GhostButton}" Command="{Binding ExportCommand}" Margin="0,0,0,8"/>
-          <Button Content="{Binding Labels.Compare}" Style="{StaticResource GhostButton}" Command="{Binding CompareCommand}" Margin="0,0,0,16"/>
-
-          <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Foreground="{StaticResource BrushMuted}"/>
-          <TextBlock Text="{Binding SessionText}" Margin="0,10,0,0" FontSize="11" Foreground="{StaticResource BrushUnknown}"/>
-        </StackPanel>
-      </Border>
-
-      <!-- Results -->
-      <Border Grid.Column="2" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="18">
+      <Border Grid.Column="0" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="14">
         <DockPanel>
-          <TextBlock DockPanel.Dock="Top" Text="{Binding Labels.Findings}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
-          <TextBlock DockPanel.Dock="Bottom" Text="{Binding DetailHint}" Foreground="{StaticResource BrushMuted}" Margin="0,12,0,0" TextWrapping="Wrap"/>
+          <TextBlock DockPanel.Dock="Top" Text="{Binding Labels.Findings}" FontSize="16" FontWeight="SemiBold"
+                     Foreground="{StaticResource BrushText}" Margin="0,0,0,8"/>
+          <TextBlock DockPanel.Dock="Bottom" Text="{Binding DetailHint}" Style="{StaticResource MutedTextStyle}"
+                     Margin="0,8,0,0"/>
           <ListBox ItemsSource="{Binding Findings}" Background="Transparent" BorderThickness="0"
+                   ScrollViewer.VerticalScrollBarVisibility="Auto"
                    ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListBox.ItemTemplate>
               <DataTemplate>
                 <Border Margin="0,0,0,8" Padding="12" Background="{StaticResource BrushBgElevated}" CornerRadius="6">
                   <Grid>
                     <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="88"/>
+                      <ColumnDefinition Width="96"/>
                       <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="{Binding Status}" FontWeight="Bold" VerticalAlignment="Top"/>
+                    <TextBlock Text="{Binding Status}" FontWeight="Bold" VerticalAlignment="Top"
+                               Foreground="{Binding StatusBrush}"/>
                     <StackPanel Grid.Column="1">
-                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
-                      <TextBlock Text="{Binding Evidence}" Foreground="{StaticResource BrushMuted}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold"
+                                 Foreground="{StaticResource BrushText}" TextWrapping="Wrap"/>
+                      <TextBlock Text="{Binding Evidence}" Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0"/>
                     </StackPanel>
                   </Grid>
                 </Border>
@@ -105,14 +175,42 @@
           </ListBox>
         </DockPanel>
       </Border>
+
+      <Border Grid.Column="2" Background="{StaticResource BrushBgPanel}" CornerRadius="10" Padding="14">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Text="SỬA LỖI (chọn một)" FontWeight="SemiBold"
+                     Foreground="{StaticResource BrushText}" Margin="0,0,0,8"/>
+          <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+            <Button Content="{Binding Labels.SafeRepair}" Style="{StaticResource GhostButton}"
+                    Command="{Binding SafeRepairCommand}" Margin="0,0,0,8" HorizontalAlignment="Stretch"/>
+            <Button Content="{Binding Labels.CopyError}" Style="{StaticResource GhostButton}"
+                    Command="{Binding CopyErrorCommand}" Margin="0,0,0,8" HorizontalAlignment="Stretch"/>
+            <TextBlock Text="{Binding SessionText}" FontSize="11" Style="{StaticResource MutedTextStyle}"/>
+            <TextBlock Text="{Binding LogPathText}" FontSize="10" Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0"/>
+          </StackPanel>
+          <ListBox ItemsSource="{Binding AvailableRepairs}" SelectedItem="{Binding SelectedRepair}"
+                   DisplayMemberPath="." Background="{StaticResource BrushBgElevated}"
+                   BorderBrush="{StaticResource BrushBorder}"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+        </DockPanel>
+      </Border>
     </Grid>
 
-    <Border Grid.Row="2" Padding="28,10,28,16">
-      <TextBlock>
-        <Hyperlink NavigateUri="https://mypc.vn" RequestNavigate="BrandLink_OnRequestNavigate">
-          <Run Text="Phát triển bởi MyPC Việt Nam ↗" Foreground="{StaticResource BrushAccent}"/>
-        </Hyperlink>
-      </TextBlock>
+    <!-- ===== BOTTOM ACTIONS ===== -->
+    <Border Grid.Row="4" Padding="24,8,24,14">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center">
+          <Hyperlink NavigateUri="https://mypc.vn" RequestNavigate="BrandLink_OnRequestNavigate">
+            <Run Text="Phát triển bởi MyPC Việt Nam ↗" Foreground="{StaticResource BrushAccent}"/>
+          </Hyperlink>
+        </TextBlock>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+          <Button Content="{Binding Labels.Export}" Style="{StaticResource GhostButton}"
+                  Command="{Binding ExportCommand}" Margin="0,0,8,0" MinWidth="140"/>
+          <Button Content="{Binding Labels.Compare}" Style="{StaticResource GhostButton}"
+                  Command="{Binding CompareCommand}" MinWidth="140"/>
+        </StackPanel>
+      </DockPanel>
     </Border>
   </Grid>
 </Window>
