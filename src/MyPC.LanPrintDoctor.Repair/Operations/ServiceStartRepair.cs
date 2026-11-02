@@ -23,6 +23,10 @@ public sealed class ServiceStartRepair : IRepairOperation
 
     public string OperationId { get; }
     public string Title { get; }
+    public bool IsImplemented => true;
+    public bool SupportsRollback => false; // starting a required service is not auto-stopped
+    public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalAny;
+    public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
 
     public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
         => Task.FromResult(new RepairPrerequisiteResult
@@ -43,11 +47,11 @@ public sealed class ServiceStartRepair : IRepairOperation
         {
             OperationId = OperationId,
             Title = Title,
-            Description = $"Start Windows service '{_serviceName}' if stopped. Spooler restart may affect active print jobs.",
+            Description = $"Start Windows service '{_serviceName}' if stopped. Spooler restart may affect active print jobs. Rollback is NOT supported (will not stop the service again).",
             Changes = new[] { $"Start {_serviceName}" },
             Risks = _serviceName.Equals("Spooler", StringComparison.OrdinalIgnoreCase)
-                ? new[] { "May interrupt active print jobs" }
-                : Array.Empty<string>(),
+                ? new[] { "May interrupt active print jobs", "Irreversible via this tool (no auto-stop)" }
+                : new[] { "Irreversible via this tool (no auto-stop)" },
             Reversible = false
         });
 
@@ -55,20 +59,70 @@ public sealed class ServiceStartRepair : IRepairOperation
         => Task.FromResult(new RepairBackup
         {
             BackupId = $"bak-{OperationId}-{Guid.NewGuid():N}",
-            Path = "memory",
+            Path = "journal",
             CreatedAt = DateTimeOffset.UtcNow,
             PayloadJson = $"{{\"service\":\"{_serviceName}\",\"status\":\"{_before}\"}}"
         });
 
-    public Task ApplyAsync(CancellationToken ct = default)
-        => _services.StartServiceAsync(_serviceName, ct);
+    public async Task ApplyAsync(CancellationToken ct = default)
+    {
+        var ok = await _services.StartServiceAsync(_serviceName, ct);
+        if (!ok)
+            throw new InvalidOperationException($"Start-Service {_serviceName} failed.");
+    }
 
     public async Task<bool> VerifyAsync(CancellationToken ct = default)
     {
         var svc = await _services.GetServiceAsync(_serviceName, ct);
-        return svc?.Status.Equals("Running", StringComparison.OrdinalIgnoreCase) == true;
+        return ServiceStatusParser.IsRunning(svc?.Status);
     }
 
-    public Task RollbackAsync(RepairBackup backup, CancellationToken ct = default)
-        => Task.CompletedTask; // starting a required service is not auto-stopped
+    public Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default)
+        => Task.FromResult(new RollbackResult
+        {
+            Attempted = false,
+            Succeeded = false,
+            Verified = false,
+            Unsupported = true,
+            Message = "Service start is irreversible via this tool; service will not be stopped automatically."
+        });
+}
+
+public static class ServiceStatusParser
+{
+    public static bool IsRunning(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status)) return false;
+        if (status.Equals("Running", StringComparison.OrdinalIgnoreCase)) return true;
+        if (status.Equals("4", StringComparison.Ordinal)) return true; // ServiceControllerStatus.Running
+        return false;
+    }
+
+    public static bool IsStopped(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status)) return false;
+        if (status.Equals("Unknown", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("Missing", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (status.Equals("Stopped", StringComparison.OrdinalIgnoreCase)) return true;
+        if (status.Equals("1", StringComparison.Ordinal)) return true;
+        return !IsRunning(status)
+               && !status.Contains("Pending", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string Normalize(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "Unknown";
+        return raw switch
+        {
+            "1" => "Stopped",
+            "2" => "StartPending",
+            "3" => "StopPending",
+            "4" => "Running",
+            "5" => "ContinuePending",
+            "6" => "PausePending",
+            "7" => "Paused",
+            _ => raw
+        };
+    }
 }

@@ -1,0 +1,436 @@
+[
+  {
+    "id": "R-01-happy-case",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true
+    },
+    "expected": "VERIFIED"
+  },
+  {
+    "id": "R-02-no-consent",
+    "config": {
+      "consent": false,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-03-client-tries-server-repair",
+    "config": {
+      "consent": true,
+      "actor_role": "CLIENT",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-04-target-is-client",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "CLIENT",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-05-no-admin",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": false,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-06-gpo",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "GPO_MANAGED",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-07-merge-disabled",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "LOCAL_MERGE_DISABLED",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-08-third-party-block",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "THIRD_PARTY_BLOCK",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-09-public-profile",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Public",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-10-wide-remote-any",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "Any",
+      "kind": "SMB",
+      "client_probe_pass": true
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-11-unknown-repair",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "DOOM",
+      "client_probe_pass": true
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-12-foreign-rule",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "existing_foreign_rule": true
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-13-duplicate-owned-rule",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "existing_owned_rule": true
+    },
+    "expected": "NO_CHANGE"
+  },
+  {
+    "id": "R-14-shaprint-foreign-pid",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SHAPRINT_TCP",
+      "client_probe_pass": true,
+      "port_owner_verified": false
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-15-corrupt-journal",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "journal": "CORRUPT"
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-16-uncertain-journal",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "journal": "UNCERTAIN"
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-17-journal-write-fails",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "inject": "JOURNAL_WRITE_FAIL"
+    },
+    "expected": "BLOCKED"
+  },
+  {
+    "id": "R-18-crash-after-intent",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "inject": "CRASH_AFTER_INTENT"
+    },
+    "expected": "UNCERTAIN"
+  },
+  {
+    "id": "R-19-crash-after-create",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "inject": "CRASH_AFTER_DISABLED_CREATE"
+    },
+    "expected": "UNCERTAIN"
+  },
+  {
+    "id": "R-20-scope-verification-fails",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "inject": "SCOPE_VERIFY_FAIL"
+    },
+    "expected": "ROLLED_BACK"
+  },
+  {
+    "id": "R-21-enable-fails",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "inject": "ENABLE_FAIL"
+    },
+    "expected": "ROLLED_BACK"
+  },
+  {
+    "id": "R-22-local-verify-fails",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "inject": "LOCAL_VERIFY_FAIL"
+    },
+    "expected": "ROLLED_BACK"
+  },
+  {
+    "id": "R-23-remote-verify-fails",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "inject": "REMOTE_VERIFY_FAIL"
+    },
+    "expected": "ROLLED_BACK"
+  },
+  {
+    "id": "R-24-remote-connection-fails",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": false
+    },
+    "expected": "ROLLED_BACK"
+  },
+  {
+    "id": "R-25-rollback-fails",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SMB",
+      "client_probe_pass": true,
+      "inject": "ROLLBACK_FAIL"
+    },
+    "expected": "UNCERTAIN"
+  },
+  {
+    "id": "R-26-icmp-local-subnet",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "ICMP",
+      "client_probe_pass": true
+    },
+    "expected": "VERIFIED"
+  },
+  {
+    "id": "R-27-shaprint-verified-owner",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "LocalSubnet",
+      "kind": "SHAPRINT_TCP",
+      "client_probe_pass": true,
+      "port_owner_verified": true
+    },
+    "expected": "VERIFIED"
+  },
+  {
+    "id": "R-28-specific-allowed-cidr",
+    "config": {
+      "consent": true,
+      "actor_role": "SERVER",
+      "target_role": "SERVER",
+      "is_admin": true,
+      "policy": "ALLOW",
+      "profile": "Private",
+      "scope": "192.168.10.0/24",
+      "kind": "SMB",
+      "client_probe_pass": true
+    },
+    "expected": "VERIFIED"
+  }
+]

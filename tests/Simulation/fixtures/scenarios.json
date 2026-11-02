@@ -1,0 +1,978 @@
+[
+  {
+    "id": "LAN-01",
+    "title": "All four clients fail; server NIC link down",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "clients_failed_count": 4,
+      "icmp": "FAIL",
+      "tcp445": "FAIL",
+      "tcp135": "FAIL",
+      "tcp48631": "FAIL",
+      "server_nic": "DOWN"
+    },
+    "expected": {
+      "finding": "SERVER_LINK_DOWN",
+      "owner": "SERVER",
+      "action": "INSPECT_NIC_CABLE_SWITCH",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Investigate server NIC/cable/switch before Windows print settings."
+  },
+  {
+    "id": "LAN-02",
+    "title": "Server asleep or powered off",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "server_power": "SLEEP",
+      "icmp": "FAIL",
+      "tcp445": "FAIL"
+    },
+    "expected": {
+      "finding": "SERVER_POWER_OR_SLEEP",
+      "owner": "SERVER",
+      "action": "CHECK_POWER_UPTIME",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Sleep/wake and network power conditions can interrupt inbound."
+  },
+  {
+    "id": "LAN-03",
+    "title": "Server link up but gateway test fails",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "server_nic": "UP",
+      "server_gateway": "FAIL",
+      "icmp": "FAIL",
+      "tcp445": "FAIL"
+    },
+    "expected": {
+      "finding": "SERVER_GATEWAY_FAIL",
+      "owner": "SERVER",
+      "action": "CHECK_LAN_GATEWAY_UPLINK",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Diagnose local uplink and configuration; not a driver repair."
+  },
+  {
+    "id": "LAN-04",
+    "title": "IP appears stable but observed MAC mismatches server MAC",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "server_mac_known": "YES",
+      "server_mac": "10:20:30:40:50:60",
+      "client_observed_mac": "70:80:90:a0:b0:c0",
+      "icmp": "FAIL",
+      "tcp445": "FAIL"
+    },
+    "expected": {
+      "finding": "IP_CONFLICT_SUSPECT",
+      "owner": "INFRA",
+      "action": "CHECK_IP_MAC_DHCP_RESERVATION",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Single mismatch suggests conflict or proxy ARP; corroboration required."
+  },
+  {
+    "id": "LAN-05",
+    "title": "VPN route supersedes office LAN route",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "vpn_route_mismatch": "YES",
+      "tcp445": "FAIL",
+      "icmp": "FAIL"
+    },
+    "expected": {
+      "finding": "VPN_ROUTE_WRONG",
+      "owner": "CLIENT",
+      "action": "REVIEW_ROUTE_SELECTION_VPN",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Validate interface selection; do not disable VPN automatically."
+  },
+  {
+    "id": "LAN-06",
+    "title": "Clients and server different VLANs with no routed path",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "same_subnet": "NO",
+      "route_to_server": "FAIL",
+      "icmp": "FAIL",
+      "tcp445": "FAIL"
+    },
+    "expected": {
+      "finding": "ROUTING_OR_VLAN",
+      "owner": "INFRA",
+      "action": "CHECK_ROUTING_VLAN_ISOLATION",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Switch/router action; software on PCs cannot force route across isolation."
+  },
+  {
+    "id": "LAN-07",
+    "title": "Client emits packets but none arrive on server capture",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "client_sent_probe": "YES",
+      "server_packet_arrival": "NO",
+      "icmp": "FAIL",
+      "tcp445": "FAIL"
+    },
+    "expected": {
+      "finding": "PACKETS_NOT_AT_SERVER",
+      "owner": "INFRA",
+      "action": "TRACE_PATH_TO_SERVER",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP",
+      "MS-PKTMON"
+    ],
+    "rationale": "Strong evidence of path/ACL issue ahead of server."
+  },
+  {
+    "id": "LAN-08",
+    "title": "Same subnet but ARP to server unresolved",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "same_subnet": "YES",
+      "arp_onlink": "FAIL",
+      "icmp": "FAIL",
+      "tcp445": "FAIL"
+    },
+    "expected": {
+      "finding": "L2_PATH_SUSPECT",
+      "owner": "INFRA",
+      "action": "CHECK_SWITCH_ARP_PATH",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Suspect L2 path; do not claim definitive switch cause from one probe."
+  },
+  {
+    "id": "LAN-09",
+    "title": "Server WFP confirms port drop and no TCP passes",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "wfp_drop_to_service": "YES",
+      "server_profile": "PRIVATE",
+      "icmp": "FAIL",
+      "tcp445": "FAIL",
+      "tcp135": "FAIL",
+      "tcp48631": "FAIL"
+    },
+    "expected": {
+      "finding": "FIREWALL_DROP_CONFIRMED",
+      "owner": "SERVER",
+      "action": "PREVIEW_SCOPED_FIREWALL_REPAIR",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP",
+      "MS-FW-NEW"
+    ],
+    "rationale": "Permit only a scoped, consented rule with post-change remote verification."
+  },
+  {
+    "id": "LAN-10",
+    "title": "Server Public profile plus matching WFP block",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "server_profile": "PUBLIC",
+      "wfp_drop_to_service": "YES",
+      "icmp": "FAIL",
+      "tcp445": "FAIL"
+    },
+    "expected": {
+      "finding": "SERVER_PUBLIC_PROFILE",
+      "owner": "SERVER",
+      "action": "REVIEW_TRUSTED_PROFILE_CHANGE",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP",
+      "MS-FW-NEW"
+    ],
+    "rationale": "Only offer Private if operator confirms trusted network and adapter."
+  },
+  {
+    "id": "LAN-11",
+    "title": "Domain policy overrides local inbound rule",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "gpo_firewall_block": "YES",
+      "tcp445": "FAIL",
+      "icmp": "FAIL"
+    },
+    "expected": {
+      "finding": "GPO_FIREWALL_OVERRIDE",
+      "owner": "ADMIN",
+      "action": "ESCALATE_POLICY_OWNER",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-FW-NEW"
+    ],
+    "rationale": "Local repair ineffective when effective policy disallows it."
+  },
+  {
+    "id": "LAN-12",
+    "title": "Third-party endpoint security blocks server inbound",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "third_party_security_block": "YES",
+      "tcp445": "FAIL",
+      "icmp": "FAIL"
+    },
+    "expected": {
+      "finding": "THIRD_PARTY_FIREWALL",
+      "owner": "ADMIN",
+      "action": "INSPECT_SECURITY_PRODUCT_POLICY",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Do not disable security product; review vendor-managed rule."
+  },
+  {
+    "id": "LAN-13",
+    "title": "Server ms_server binding disabled",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "server_binding_ms_server": "DISABLED",
+      "tcp445": "FAIL",
+      "icmp": "PASS"
+    },
+    "expected": {
+      "finding": "SMB_SERVER_BINDING_DISABLED",
+      "owner": "SERVER",
+      "action": "PREVIEW_ENABLE_MS_SERVER_BINDING",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-BINDING"
+    ],
+    "rationale": "Offer change on selected NIC only, with rollback."
+  },
+  {
+    "id": "LAN-14",
+    "title": "LanmanServer service stopped and TCP 445 absent",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "lanmanserver": "STOPPED",
+      "tcp445": "FAIL",
+      "icmp": "PASS"
+    },
+    "expected": {
+      "finding": "SMB_SERVER_SERVICE_STOPPED",
+      "owner": "SERVER",
+      "action": "PREVIEW_START_LANMANSERVER",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-PRINT-GUIDE"
+    ],
+    "rationale": "Service start after checking reason; test listener and client."
+  },
+  {
+    "id": "SHA-15",
+    "title": "ShaPrint server process stopped and port closed",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "sha_process": "STOPPED",
+      "tcp48631": "FAIL",
+      "tcp445": "PASS"
+    },
+    "expected": {
+      "finding": "SHAPRINT_PROCESS_STOPPED",
+      "owner": "SERVER",
+      "action": "PREVIEW_START_SHAPRINT",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "SHA-344"
+    ],
+    "rationale": "Start verified app at server with explicit approval."
+  },
+  {
+    "id": "SHA-16",
+    "title": "Another process owns TCP 48631",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "sha_port_owner": "FOREIGN",
+      "tcp48631": "PASS",
+      "tcp445": "PASS"
+    },
+    "expected": {
+      "finding": "SHAPRINT_FOREIGN_PORT",
+      "owner": "SERVER",
+      "action": "INVESTIGATE_PORT_OWNER_NO_KILL",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "SHA-344"
+    ],
+    "rationale": "Do not kill foreign process without audit."
+  },
+  {
+    "id": "SHA-17",
+    "title": "ShaPrint fails to resume after login/reboot",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "sha_process": "RUNNING",
+      "sha_startup": "DISABLED",
+      "post_reboot": "YES",
+      "tcp48631": "UNKNOWN"
+    },
+    "expected": {
+      "finding": "SHAPRINT_STARTUP_FAIL",
+      "owner": "SERVER",
+      "action": "REVIEW_USER_SESSION_STARTUP",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "SHA-344"
+    ],
+    "rationale": "Check per-user startup and sharing state; do not install unrequested daemon."
+  },
+  {
+    "id": "SHA-18",
+    "title": "TCP port open but IPPS TLS handshake fails",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "tcp48631": "PASS",
+      "ipps_tls": "FAIL"
+    },
+    "expected": {
+      "finding": "SHAPRINT_TLS_FAIL",
+      "owner": "LOCAL",
+      "action": "VERIFY_TLS_PIN_AND_CERT_IDENTITY",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "SHA-344"
+    ],
+    "rationale": "TCP success is not IPPS authentication success."
+  },
+  {
+    "id": "SHA-19",
+    "title": "ShaPrint server open; client loopback proxy down",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "tcp48631": "PASS",
+      "proxy48632": "FAIL"
+    },
+    "expected": {
+      "finding": "SHAPRINT_CLIENT_PROXY_FAIL",
+      "owner": "CLIENT",
+      "action": "PREVIEW_REPAIR_LOCAL_PROXY",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "SHA-344"
+    ],
+    "rationale": "Loopback port 48632 must never be opened to LAN."
+  },
+  {
+    "id": "SHA-20",
+    "title": "ShaPrint direct unicast works; discovery UDP fails",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "tcp48631": "PASS",
+      "discovery_udp48633": "FAIL"
+    },
+    "expected": {
+      "finding": "SHAPRINT_DISCOVERY_FAIL",
+      "owner": "LOCAL",
+      "action": "TEST_UNICAST_THEN_MDNS",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "SHA-344"
+    ],
+    "rationale": "Test unicast and discovery separately, especially across VLAN."
+  },
+  {
+    "id": "PRN-21",
+    "title": "Spooler stopped but host is reachable",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "spooler": "STOPPED",
+      "tcp445": "PASS"
+    },
+    "expected": {
+      "finding": "SPOOLER_STOPPED",
+      "owner": "SERVER",
+      "action": "PREVIEW_START_SPOOLER",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-PRINT-GUIDE"
+    ],
+    "rationale": "Start service with consent; do not delete queued jobs."
+  },
+  {
+    "id": "PRN-22",
+    "title": "Printer USB unplugged on server",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "printer_usb": "DISCONNECTED",
+      "tcp445": "PASS"
+    },
+    "expected": {
+      "finding": "PRINTER_USB_UNPLUGGED",
+      "owner": "SERVER",
+      "action": "CHECK_USB_PHYSICAL_LINK",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-PRINT-GUIDE"
+    ],
+    "rationale": "Physical correction required."
+  },
+  {
+    "id": "PRN-23",
+    "title": "Locally installed printer offline",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "printer_status": "OFFLINE",
+      "tcp445": "PASS"
+    },
+    "expected": {
+      "finding": "PRINTER_OFFLINE",
+      "owner": "SERVER",
+      "action": "CHECK_LOCAL_PRINTER_HARDWARE",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-PRINT-GUIDE"
+    ],
+    "rationale": "Check power/cables/local test before remote sharing."
+  },
+  {
+    "id": "PRN-24",
+    "title": "Printer queue paused",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "printer_status": "PAUSED",
+      "tcp445": "PASS"
+    },
+    "expected": {
+      "finding": "PRINTER_PAUSED",
+      "owner": "SERVER",
+      "action": "PREVIEW_UNPAUSE_SELECTED_PRINTER",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-PRINT-GUIDE"
+    ],
+    "rationale": "Only unpause selected queue with operator approval."
+  },
+  {
+    "id": "PRN-25",
+    "title": "Printer local but share disabled",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "printer_shared": "NO",
+      "tcp445": "PASS"
+    },
+    "expected": {
+      "finding": "PRINTER_SHARE_DISABLED",
+      "owner": "SERVER",
+      "action": "PREVIEW_SHARE_SELECTED_PRINTER",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-PRINT-GUIDE"
+    ],
+    "rationale": "Share selected printer only; do not broaden ACL."
+  },
+  {
+    "id": "SMB-26",
+    "title": "TCP 445 passes but UNC access denied",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "tcp445": "PASS",
+      "smb_access": "ACCESS_DENIED",
+      "icmp": "FAIL"
+    },
+    "expected": {
+      "finding": "SMB_AUTH_DENIED",
+      "owner": "CLIENT",
+      "action": "FIX_VALID_ACCOUNT_SHARE_PERMISSIONS",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-SIGNING"
+    ],
+    "rationale": "No SMB1, guest, or SMB signing downgrade."
+  },
+  {
+    "id": "SMB-27",
+    "title": "Win11 SMB signing/auth mismatch",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "tcp445": "PASS",
+      "smb_access": "SIGNING_MISMATCH"
+    },
+    "expected": {
+      "finding": "SMB_SIGNING_INCOMPAT",
+      "owner": "CLIENT",
+      "action": "REQUIRE_SECURE_SMB_AUTH",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-SIGNING"
+    ],
+    "rationale": "Require secure compatible authentication."
+  },
+  {
+    "id": "SMB-28",
+    "title": "SMB access works but printer share path missing",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "tcp445": "PASS",
+      "smb_access": "SHARE_NOT_FOUND"
+    },
+    "expected": {
+      "finding": "SMB_SHARE_NOT_FOUND",
+      "owner": "SERVER",
+      "action": "VERIFY_SHARE_NAME_AND_SHARE_STATUS",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-PRINT-GUIDE"
+    ],
+    "rationale": "Verify share path/name; don't touch network stack."
+  },
+  {
+    "id": "RPC-29",
+    "title": "SMB reachable while RPC 135 blocked",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "tcp445": "PASS",
+      "tcp135": "FAIL",
+      "print_rpc": "FAIL"
+    },
+    "expected": {
+      "finding": "RPC_ENDPOINT_FAIL",
+      "owner": "SERVER",
+      "action": "DIAGNOSE_RPC_ENDPOINT_FIREWALL",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-RPC"
+    ],
+    "rationale": "RPC Endpoint Mapper failure should not trigger SMB repair."
+  },
+  {
+    "id": "RPC-30",
+    "title": "RPC 135 and SMB reachable but print dynamic endpoint blocked",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "tcp445": "PASS",
+      "tcp135": "PASS",
+      "print_rpc": "DYNAMIC_FAIL"
+    },
+    "expected": {
+      "finding": "RPC_DYNAMIC_FAIL",
+      "owner": "SERVER",
+      "action": "DIAGNOSE_RPC_DYNAMIC_ENDPOINT",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-RPC"
+    ],
+    "rationale": "Investigate print-specific RPC endpoint; no opening 49152-65535 blindly."
+  },
+  {
+    "id": "PRN-31",
+    "title": "Point-and-Print signed driver blocked by admin policy",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "tcp445": "PASS",
+      "driver_policy": "BLOCK"
+    },
+    "expected": {
+      "finding": "PRINTER_DRIVER_POLICY",
+      "owner": "CLIENT",
+      "action": "USE_TRUSTED_SIGNED_DRIVER_ADMIN",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-PRINT-GUIDE"
+    ],
+    "rationale": "Install trusted driver with proper admin rights; don't relax policy."
+  },
+  {
+    "id": "PRN-32",
+    "title": "Server cannot print locally despite functional LAN",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "local_printer_test": "FAIL",
+      "tcp445": "PASS"
+    },
+    "expected": {
+      "finding": "LOCAL_PRINT_FAIL",
+      "owner": "SERVER",
+      "action": "REPAIR_LOCAL_PRINT_PIPELINE",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-PRINT-GUIDE"
+    ],
+    "rationale": "Fix local print pipeline before networking."
+  },
+  {
+    "id": "PRN-33",
+    "title": "Spooler accepts job but no physical paper confirmation",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "job_accepted": "YES",
+      "physical_print": "NOT_VERIFIED"
+    },
+    "expected": {
+      "finding": "PHYSICAL_PRINT_NOT_VERIFIED",
+      "owner": "LOCAL",
+      "action": "REQUEST_PHYSICAL_PRINT_CONFIRMATION",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-PRINT-GUIDE"
+    ],
+    "rationale": "Never report physical print PASS from spooler ack."
+  },
+  {
+    "id": "LAN-34",
+    "title": "Server IP works, hostname lookup fails",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "hostname_lookup": "FAIL",
+      "tcp445": "PASS",
+      "icmp": "PASS"
+    },
+    "expected": {
+      "finding": "DNS_RESOLUTION_FAIL",
+      "owner": "LOCAL",
+      "action": "REVIEW_DNS_NAME_RESOLUTION",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Name resolution issue, not transport."
+  },
+  {
+    "id": "LAN-35",
+    "title": "Ping fails but SMB succeeds",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "icmp": "FAIL",
+      "tcp445": "PASS"
+    },
+    "expected": {
+      "finding": "ICMP_ONLY_FILTERED",
+      "owner": "SERVER",
+      "action": "OPTIONAL_SCOPED_ICMP_RULE",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "ICMP optional, printer may still work."
+  },
+  {
+    "id": "LAN-36",
+    "title": "All four clients fail all ports, no server witness",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "clients_failed_count": 4,
+      "server_witness": "NOT_TESTED",
+      "icmp": "FAIL",
+      "tcp445": "FAIL",
+      "tcp135": "FAIL",
+      "tcp48631": "FAIL"
+    },
+    "expected": {
+      "finding": "SERVER_AND_INFRA_UNKNOWN",
+      "owner": "LOCAL",
+      "action": "COLLECT_SERVER_AND_CLIENT_EVIDENCE",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Cannot distinguish firewall/NIC/switch from client-only results."
+  },
+  {
+    "id": "LAN-37",
+    "title": "Server link repeatedly flaps around outage",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "server_link_flaps": "YES",
+      "icmp": "UNKNOWN",
+      "tcp445": "UNKNOWN"
+    },
+    "expected": {
+      "finding": "NETWORK_UNSTABLE",
+      "owner": "SERVER",
+      "action": "COLLECT_REBOOT_LINK_HISTORY",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Correlate driver, power management, switch logs and uptime."
+  },
+  {
+    "id": "LAN-38",
+    "title": "All probes unknown or not tested",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "icmp": "UNKNOWN",
+      "tcp445": "NOT_TESTED",
+      "tcp135": "UNKNOWN",
+      "tcp48631": "UNKNOWN"
+    },
+    "expected": {
+      "finding": "INSUFFICIENT_EVIDENCE",
+      "owner": "LOCAL",
+      "action": "COLLECT_READ_ONLY_PROBES",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Never infer FAIL from Unknown/NotTested."
+  },
+  {
+    "id": "TX-39",
+    "title": "Prior repair journal corrupt",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "journal": "CORRUPT",
+      "tcp445": "FAIL"
+    },
+    "expected": {
+      "finding": "JOURNAL_BLOCK",
+      "owner": "LOCAL",
+      "action": "BLOCK_REPAIR_REVIEW_JOURNAL",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-FW-NEW"
+    ],
+    "rationale": "Fail closed before repair; technician review required."
+  },
+  {
+    "id": "TX-40",
+    "title": "Prior transaction applied but not verified",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "journal": "UNCERTAIN",
+      "tcp445": "FAIL"
+    },
+    "expected": {
+      "finding": "JOURNAL_BLOCK",
+      "owner": "LOCAL",
+      "action": "BLOCK_REPAIR_REVIEW_JOURNAL",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-FW-NEW"
+    ],
+    "rationale": "No further mutation while state uncertain."
+  },
+  {
+    "id": "LAN-41",
+    "title": "SMB port fail while ShaPrint TCP remains reachable",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "icmp": "FAIL",
+      "tcp445": "FAIL",
+      "tcp48631": "PASS",
+      "printer_path": "SMB"
+    },
+    "expected": {
+      "finding": "SMB_PORT_FAIL",
+      "owner": "SERVER",
+      "action": "DIAGNOSE_SMB_SERVICE_FIREWALL",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP",
+      "SHA-344"
+    ],
+    "rationale": "Host is reachable; diagnose SMB only."
+  },
+  {
+    "id": "LAN-42",
+    "title": "Windows 11 26H2 client but tests unavailable",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "client_os": "Windows 11 26H2",
+      "icmp": "NOT_TESTED",
+      "tcp445": "NOT_TESTED",
+      "tcp135": "NOT_TESTED",
+      "tcp48631": "NOT_TESTED"
+    },
+    "expected": {
+      "finding": "INSUFFICIENT_EVIDENCE",
+      "owner": "LOCAL",
+      "action": "COLLECT_READ_ONLY_PROBES",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Never claim version support without validated testing."
+  },
+  {
+    "id": "LAN-43",
+    "title": "4 clients fail ICMP but TCP 48631 works",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "clients_failed_count": 4,
+      "icmp": "FAIL",
+      "tcp445": "UNKNOWN",
+      "tcp48631": "PASS"
+    },
+    "expected": {
+      "finding": "ICMP_ONLY_FILTERED",
+      "owner": "SERVER",
+      "action": "OPTIONAL_SCOPED_ICMP_RULE",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP",
+      "SHA-344"
+    ],
+    "rationale": "All clients losing ICMP does not prove server disappeared."
+  },
+  {
+    "id": "LAN-44",
+    "title": "Sporadic ARP mismatch despite same server IP",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "server_mac_known": "YES",
+      "server_mac": "aa:bb:cc:dd:ee:01",
+      "client_observed_mac": "aa:bb:cc:dd:ee:02",
+      "same_subnet": "YES",
+      "icmp": "FAIL"
+    },
+    "expected": {
+      "finding": "IP_CONFLICT_SUSPECT",
+      "owner": "INFRA",
+      "action": "CHECK_IP_MAC_DHCP_RESERVATION",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Check multiple probes for ARP proxy/duplicate address."
+  },
+  {
+    "id": "LAN-45",
+    "title": "External firewall drop proven while profiles look correct",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "server_profile": "PRIVATE",
+      "third_party_security_block": "YES",
+      "icmp": "FAIL",
+      "tcp445": "FAIL"
+    },
+    "expected": {
+      "finding": "THIRD_PARTY_FIREWALL",
+      "owner": "ADMIN",
+      "action": "INSPECT_SECURITY_PRODUCT_POLICY",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-TCP"
+    ],
+    "rationale": "Don't disable antivirus to force a pass."
+  },
+  {
+    "id": "PRN-46",
+    "title": "Printing works local but SMB requires auth",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "tcp445": "PASS",
+      "smb_access": "ACCESS_DENIED",
+      "local_printer_test": "PASS"
+    },
+    "expected": {
+      "finding": "SMB_AUTH_DENIED",
+      "owner": "CLIENT",
+      "action": "FIX_VALID_ACCOUNT_SHARE_PERMISSIONS",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-SIGNING",
+      "MS-PRINT-GUIDE"
+    ],
+    "rationale": "No need to reinstall local printer."
+  },
+  {
+    "id": "SHA-47",
+    "title": "ShaPrint works but print client proxy down after reboot",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "tcp48631": "PASS",
+      "proxy48632": "FAIL",
+      "post_reboot": "YES"
+    },
+    "expected": {
+      "finding": "SHAPRINT_CLIENT_PROXY_FAIL",
+      "owner": "CLIENT",
+      "action": "PREVIEW_REPAIR_LOCAL_PROXY",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "SHA-344"
+    ],
+    "rationale": "Client-side proxy issue, server reachable."
+  },
+  {
+    "id": "RPC-48",
+    "title": "RPC printer failure, ping/SMB and endpoint mapper pass",
+    "origin": "SYNTHETIC_MOCK_SCENARIO_NOT_REAL_MACHINE_EVIDENCE",
+    "observations": {
+      "icmp": "PASS",
+      "tcp445": "PASS",
+      "tcp135": "PASS",
+      "print_rpc": "DYNAMIC_FAIL"
+    },
+    "expected": {
+      "finding": "RPC_DYNAMIC_FAIL",
+      "owner": "SERVER",
+      "action": "DIAGNOSE_RPC_DYNAMIC_ENDPOINT",
+      "automatic_repair_permitted": false
+    },
+    "references": [
+      "MS-RPC"
+    ],
+    "rationale": "Document RPC dynamic endpoint before targeted rule."
+  }
+]

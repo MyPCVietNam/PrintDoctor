@@ -39,6 +39,7 @@ public sealed class NetworkAdapterInfo
     public NetworkCategory Category { get; init; } = NetworkCategory.Unknown;
     public AdapterKind Kind { get; init; } = AdapterKind.Unknown;
     public int InterfaceIndex { get; init; }
+    public string? ProfileName { get; init; }
 }
 
 public sealed class RouteEntry
@@ -48,6 +49,8 @@ public sealed class RouteEntry
     public string? Gateway { get; init; }
     public int InterfaceIndex { get; init; }
     public int Metric { get; init; }
+    public string? NextHop { get; init; }
+    public int? RouteMetric { get; init; }
 }
 
 public sealed class NeighborEntry
@@ -56,6 +59,7 @@ public sealed class NeighborEntry
     public string? MacAddress { get; init; }
     public string? State { get; init; }
     public string? InterfaceAlias { get; init; }
+    public int? InterfaceIndex { get; init; }
 }
 
 public enum ProbeProtocol
@@ -70,11 +74,24 @@ public sealed class ConnectivityProbeResult
     public required string Target { get; init; }
     public required ProbeProtocol Protocol { get; init; }
     public int? Port { get; init; }
-    public bool Success { get; init; }
+    public ProbeOutcome Outcome { get; init; } = ProbeOutcome.NotTested;
     public string? Detail { get; init; }
     public TimeSpan? Latency { get; init; }
 
-    public DiagnosticStatus Status => Success
-        ? DiagnosticStatus.Pass
-        : DiagnosticStatus.Fail;
+    public bool Success => Outcome == ProbeOutcome.Pass;
+
+    public DiagnosticStatus Status => Outcome switch
+    {
+        ProbeOutcome.Pass => DiagnosticStatus.Pass,
+        ProbeOutcome.Fail or ProbeOutcome.AuthDenied or ProbeOutcome.AccessDenied => DiagnosticStatus.Fail,
+        ProbeOutcome.NotApplicable => DiagnosticStatus.NotApplicable,
+        ProbeOutcome.NotTested => DiagnosticStatus.Unknown,
+        _ => DiagnosticStatus.Unknown
+    };
+}
+
+public sealed class CollectorStatus
+{
+    public ProbeOutcome Outcome { get; init; } = ProbeOutcome.Unknown;
+    public string? Detail { get; init; }
 }

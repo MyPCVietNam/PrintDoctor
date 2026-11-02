@@ -49,28 +49,63 @@ public sealed class DecisionEngine
         var tcpToTarget = string.IsNullOrWhiteSpace(target)
             ? Array.Empty<ConnectivityProbeResult>()
             : tcp.Where(p => string.Equals(p.Target, target, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var icmpFail = icmpToTarget.Length > 0 && icmpToTarget.All(p => !p.Success);
-        var icmpPass = icmpToTarget.Any(p => p.Success);
-        var tcpPass = tcpToTarget.Any(p => p.Success);
-        var tcpFail = tcpToTarget.Length > 0 && tcpToTarget.All(p => !p.Success);
+
+        // Only Pass/Fail are decisive. Unknown/NotTested/NotApplicable must NOT become Fail.
+        static bool IsDecisive(ConnectivityProbeResult p)
+            => p.Outcome is ProbeOutcome.Pass or ProbeOutcome.Fail;
+        static bool IsFail(ConnectivityProbeResult p) => p.Outcome == ProbeOutcome.Fail;
+        static bool IsPass(ConnectivityProbeResult p) => p.Outcome == ProbeOutcome.Pass;
+
+        var icmpDecisive = icmpToTarget.Where(IsDecisive).ToArray();
+        var tcpDecisive = tcpToTarget.Where(IsDecisive).ToArray();
+        var icmpFail = icmpDecisive.Length > 0 && icmpDecisive.All(IsFail);
+        var icmpPass = icmpDecisive.Any(IsPass);
+        var tcpPass = tcpDecisive.Any(IsPass);
+        var tcpFail = tcpDecisive.Length > 0 && tcpDecisive.All(IsFail);
+        var icmpUnknownOnly = icmpToTarget.Length > 0 && icmpDecisive.Length == 0;
+        var tcpUnknownOnly = tcpToTarget.Length > 0 && tcpDecisive.Length == 0;
 
         if (!string.IsNullOrWhiteSpace(target))
         {
-            if (icmpFail && tcpPass)
+            if (icmpUnknownOnly || (icmpToTarget.Length > 0 && !icmpFail && !icmpPass && tcpFail))
             {
                 findings.Add(new Finding
                 {
+                    Id = "LAN-001U",
+                    Title = "Insufficient ICMP evidence (Unknown/NotTested)",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = $"ICMP outcomes to {target}: {string.Join(",", icmpToTarget.Select(p => p.Outcome))}; TCP decisiveFail={tcpFail}",
+                    Confidence = 0.55,
+                    Category = "Network",
+                    PossibleCauses = new[] { "Probe cancelled", "Insufficient rights", "Collector error" },
+                    RecommendedActions = new[] { "Re-run probes", "Do not conclude host unreachable" },
+                    RepairOwner = RepairOwnerRole.None,
+                    VerificationMethod = "Decisive ICMP Pass/Fail required"
+                });
+            }
+
+            if (icmpFail && tcpPass)
+            {
+                // Inbound ICMP on the *target* — client must not self-repair local firewall for a server issue.
+                var serverSide = snap.Role == MachineRole.Client;
+                findings.Add(new Finding
+                {
                     Id = "LAN-002",
-                    Title = "ICMP blocked suspected",
+                    Title = serverSide ? "ICMP blocked suspected on SERVER (SERVER_ACTION_REQUIRED)" : "ICMP blocked suspected (local)",
                     Severity = Severity.Medium,
                     Status = DiagnosticStatus.Warning,
-                    Evidence = $"ICMP to {target} failed while at least one TCP probe succeeded: {string.Join(", ", tcpToTarget.Where(t => t.Success).Select(t => t.Port?.ToString() ?? "?"))}",
+                    Evidence = $"ICMP to {target} failed while at least one TCP probe succeeded: {string.Join(", ", tcpDecisive.Where(IsPass).Select(t => t.Port?.ToString() ?? "?"))}",
                     Confidence = 0.8,
                     Category = "Network",
-                    PossibleCauses = new[] { "Windows Firewall ICMP Echo rule disabled", "Third-party firewall ICMP filter", "Router ICMP filter" },
-                    RecommendedActions = new[] { "Inspect ICMP Echo Request inbound rules on target", "Do not treat host as offline" },
-                    RepairId = "FW-ICMP-ECHO",
-                    VerificationMethod = "Re-run ICMP + TCP probes"
+                    PossibleCauses = new[] { "Windows Firewall ICMP Echo rule disabled on target", "Third-party firewall ICMP filter", "Router ICMP filter" },
+                    RecommendedActions = serverSide
+                        ? new[] { "SERVER_ACTION_REQUIRED: run PrintDoctor as Server on the target host", "Do not modify this client firewall for server inbound ICMP" }
+                        : new[] { "Prefer owned MyPC.PrintDoctor.ICMPv4.Private (Private/LocalSubnet)", "Do not treat host as offline" },
+                    // P2-02: prefer PrintDoctor-owned rule over mutating system FPS group rules.
+                    RepairId = serverSide ? null : "FW-OWNED-ICMP4",
+                    RepairOwner = serverSide ? RepairOwnerRole.ServerActionRequired : RepairOwnerRole.LocalServer,
+                    VerificationMethod = "Re-run ICMP + TCP probes on owning machine"
                 });
             }
             else if (icmpFail && tcpFail)
@@ -81,7 +116,7 @@ public sealed class DecisionEngine
                     Title = "Server unreachable (ICMP and TCP failed)",
                     Severity = Severity.Critical,
                     Status = DiagnosticStatus.Fail,
-                    Evidence = $"ICMP and TCP probes to {target} all failed. Not sufficient alone to blame firewall.",
+                    Evidence = $"Decisive ICMP and TCP probes to {target} all Fail. Unknown/NotTested ignored.",
                     Confidence = 0.7,
                     Category = "Network",
                     PossibleCauses = new[]
@@ -100,7 +135,25 @@ public sealed class DecisionEngine
                         "Verify listeners on server",
                         "Inspect switch/router if both ends look healthy"
                     },
+                    RepairOwner = RepairOwnerRole.None,
                     VerificationMethod = "Server+client correlation report"
+                });
+            }
+            else if (icmpFail && tcpUnknownOnly)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "LAN-001P",
+                    Title = "ICMP Fail but TCP not decisive — insufficient for unreachable",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = $"ICMP Fail to {target}; TCP outcomes: {string.Join(",", tcpToTarget.Select(p => p.Outcome))}",
+                    Confidence = 0.5,
+                    Category = "Network",
+                    PossibleCauses = new[] { "TCP not tested", "Partial collector failure" },
+                    RecommendedActions = new[] { "Complete TCP probes before concluding LAN-001" },
+                    RepairOwner = RepairOwnerRole.None,
+                    VerificationMethod = "Decisive TCP Pass/Fail"
                 });
             }
 
@@ -235,6 +288,7 @@ public sealed class DecisionEngine
                         PossibleCauses = new[] { "Network reclassified after reconnect", "User/policy change" },
                         RecommendedActions = new[] { "Confirm trusted LAN", "Offer Private profile change only with user consent" },
                         RepairId = "NET-PROFILE-PRIVATE",
+                        RepairOwner = RepairOwnerRole.LocalAny,
                         VerificationMethod = "Re-read NetworkCategory + sharing rules"
                     });
                 }
@@ -290,9 +344,12 @@ public sealed class DecisionEngine
                 Confidence = 0.75,
                 Category = "Firewall",
                 PossibleCauses = new[] { "Manual disable", "Profile mismatch", "Security software" },
-                RecommendedActions = new[] { "Enable scoped ICMP/File and Printer Sharing rules for Private/LocalSubnet" },
-                RepairId = "FW-ICMP-ECHO",
-                VerificationMethod = "Rule dump + ICMP probe"
+                RecommendedActions = snap.Role == MachineRole.Client
+                    ? new[] { "SERVER_ACTION_REQUIRED if rules are on the print server", "Do not widen client Public profile rules" }
+                    : new[] { "Create owned MyPC.PrintDoctor.ICMPv4.Private (Disabled→verify→Enable)" },
+                RepairId = snap.Role == MachineRole.Server ? "FW-OWNED-ICMP4" : null,
+                RepairOwner = snap.Role == MachineRole.Server ? RepairOwnerRole.LocalServer : RepairOwnerRole.ServerActionRequired,
+                VerificationMethod = "Rule dump + ICMP probe on owning machine"
             });
         }
     }
@@ -322,6 +379,7 @@ public sealed class DecisionEngine
                     PossibleCauses = new[] { "Crash", "Manual stop", "Dependency failure" },
                     RecommendedActions = new[] { "Start Spooler with user awareness of in-flight jobs" },
                     RepairId = "SVC-SPOOLER-START",
+                    RepairOwner = RepairOwnerRole.LocalAny,
                     VerificationMethod = "Service status + printer enumeration"
                 });
             }
@@ -339,6 +397,7 @@ public sealed class DecisionEngine
                     PossibleCauses = new[] { "Service disabled", "Policy", "Dependency" },
                     RecommendedActions = new[] { "Start LanmanServer if sharing is required" },
                     RepairId = "SVC-LANMANSERVER-START",
+                    RepairOwner = snap.Role == MachineRole.Server ? RepairOwnerRole.LocalServer : RepairOwnerRole.ServerActionRequired,
                     VerificationMethod = "Service status + TCP 445 listen"
                 });
             }
@@ -356,6 +415,7 @@ public sealed class DecisionEngine
                     PossibleCauses = new[] { "Service disabled" },
                     RecommendedActions = new[] { "Start LanmanWorkstation" },
                     RepairId = "SVC-LANMANWORKSTATION-START",
+                    RepairOwner = RepairOwnerRole.LocalAny,
                     VerificationMethod = "Service status + UNC probe"
                 });
             }
@@ -400,8 +460,15 @@ public sealed class DecisionEngine
 
         if (snap.SmbProbe is { } probe)
         {
-            if (!probe.Tcp445Open)
+            if (probe.Tcp445 == ProbeOutcome.Fail)
             {
+                // Do NOT auto-open firewall solely because a remote probe failed.
+                // Owned SMB repair only when THIS machine is the server and LanmanServer is running
+                // (listener expected) — still requires user consent; never opens RemoteAddress=Any.
+                var lanmanUp = snap.Services.Any(s =>
+                    s.Name.Equals("LanmanServer", StringComparison.OrdinalIgnoreCase)
+                    && s.Status.Equals("Running", StringComparison.OrdinalIgnoreCase));
+                var serverOwned = snap.Role == MachineRole.Server && lanmanUp;
                 findings.Add(new Finding
                 {
                     Id = "SMB-001",
@@ -412,11 +479,47 @@ public sealed class DecisionEngine
                     Confidence = 0.8,
                     Category = "SMB",
                     PossibleCauses = new[] { "Network path", "Firewall", "LanmanServer down", "Infrastructure isolation" },
-                    RecommendedActions = new[] { "Correlate with server listener and firewall", "Distinguish auth vs network" },
+                    RecommendedActions = serverOwned
+                        ? new[] { "Confirm listener + Private profile", "Optional owned MyPC.PrintDoctor.SMB445.Private (LocalSubnet only)" }
+                        : new[] { "Correlate with server listener and firewall", "Distinguish auth vs network — do not open ports on client" },
+                    RepairId = serverOwned ? "FW-OWNED-SMB445" : null,
+                    RepairOwner = serverOwned ? RepairOwnerRole.LocalServer : RepairOwnerRole.ServerActionRequired,
                     VerificationMethod = "TCP 445 + service + firewall"
                 });
             }
-            else if (probe.Tcp445Open && !probe.UncReachable)
+            else if (probe.Tcp445 == ProbeOutcome.Pass && probe.Unc == ProbeOutcome.NotTested)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-004A",
+                    Title = "TCP 445 open; UNC not tested",
+                    Severity = Severity.Low,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = probe.Detail ?? "UNC=NotTested",
+                    Confidence = 0.9,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Collector skipped UNC probe" },
+                    RecommendedActions = new[] { "Do not treat as SMB failure", "Re-run with UNC probe enabled" },
+                    VerificationMethod = "UNC ProbeOutcome"
+                });
+            }
+            else if (probe.Tcp445 == ProbeOutcome.Pass && probe.Unc == ProbeOutcome.AuthDenied)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-004B",
+                    Title = "TCP 445 open; UNC authentication denied",
+                    Severity = Severity.High,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = probe.Detail ?? "UNC=AuthDenied",
+                    Confidence = 0.85,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Credentials", "Share permissions", "Guest blocked" },
+                    RecommendedActions = new[] { "Use proper account", "Do not enable insecure guest or disable SMB signing" },
+                    VerificationMethod = "Authenticated share list"
+                });
+            }
+            else if (probe.Tcp445 == ProbeOutcome.Pass && probe.Unc == ProbeOutcome.Fail)
             {
                 findings.Add(new Finding
                 {
@@ -427,16 +530,48 @@ public sealed class DecisionEngine
                     Evidence = probe.Detail ?? "UNC probe failed",
                     Confidence = 0.7,
                     Category = "SMB",
-                    PossibleCauses = new[] { "Authentication", "Share permissions", "Name resolution", "SMB signing/policy" },
-                    RecommendedActions = new[] { "Check event logs for auth failures", "Do not disable SMB signing" },
+                    PossibleCauses = new[] { "Share permissions", "Name resolution", "SMB policy" },
+                    RecommendedActions = new[] { "Check event logs", "Do not disable SMB signing" },
                     VerificationMethod = "Authenticated share list"
+                });
+            }
+            else if (probe.Tcp445 == ProbeOutcome.Pass && probe.Unc == ProbeOutcome.Unknown)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-004C",
+                    Title = "TCP 445 open; UNC result UNKNOWN",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = probe.Detail ?? "UNC=Unknown",
+                    Confidence = 0.6,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Insufficient rights", "Ambiguous error" },
+                    RecommendedActions = new[] { "Re-run elevated", "Inspect collector detail" },
+                    VerificationMethod = "UNC ProbeOutcome"
                 });
             }
         }
 
         if (snap.SharingToggles is { } toggles)
         {
-            if (!toggles.NetworkDiscovery || !toggles.FileAndPrinterSharing)
+            if (toggles.NetworkDiscovery == ProbeOutcome.Unknown || toggles.FileAndPrinterSharing == ProbeOutcome.Unknown)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SMB-005U",
+                    Title = "Sharing toggles UNKNOWN (collector)",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = toggles.Detail ?? "sharing toggles not collected",
+                    Confidence = 0.7,
+                    Category = "SMB",
+                    PossibleCauses = new[] { "Insufficient rights", "PowerShell failure" },
+                    RecommendedActions = new[] { "Re-run as Administrator", "Do not assume sharing is enabled" },
+                    VerificationMethod = "Get-NetFirewallRule group status"
+                });
+            }
+            else if (toggles.NetworkDiscovery == ProbeOutcome.Fail || toggles.FileAndPrinterSharing == ProbeOutcome.Fail)
             {
                 findings.Add(new Finding
                 {
@@ -444,12 +579,13 @@ public sealed class DecisionEngine
                     Title = "Network Discovery / File and Printer Sharing disabled",
                     Severity = Severity.Medium,
                     Status = DiagnosticStatus.Warning,
-                    Evidence = $"Discovery={toggles.NetworkDiscovery}, Sharing={toggles.FileAndPrinterSharing}",
+                    Evidence = $"Discovery={toggles.NetworkDiscovery}, Sharing={toggles.FileAndPrinterSharing}; {toggles.Detail}",
                     Confidence = 0.85,
                     Category = "SMB",
                     PossibleCauses = new[] { "Public profile", "Manual toggle" },
                     RecommendedActions = new[] { "Enable for Private profile only when LAN is trusted" },
                     RepairId = "FW-FILE-PRINT-SHARE",
+                    RepairOwner = RepairOwnerRole.LocalAny,
                     VerificationMethod = "Sharing toggles + browse"
                 });
             }
@@ -513,43 +649,133 @@ public sealed class DecisionEngine
                 Confidence = 0.9,
                 Category = "ShaPrint",
                 PossibleCauses = new[] { "Crash after login", "Startup task missing", "User exited tray app" },
-                RecommendedActions = new[] { "Start ShaPrint manually and retest endpoints", "Do not uninstall automatically" },
-                VerificationMethod = "Process list + TCP 48631"
+                RecommendedActions = new[]
+                {
+                    "Start verified ShaPrint executable only",
+                    "Do not open firewall before a listener exists",
+                    "Do not uninstall/reinstall automatically"
+                },
+                RepairId = snap.Role == MachineRole.Server ? "SHA-START-PROCESS" : null,
+                RepairOwner = snap.Role == MachineRole.Server ? RepairOwnerRole.LocalServer : RepairOwnerRole.ServerActionRequired,
+                VerificationMethod = "Process list + TCP 48631 (not IPPS PASS)"
             });
         }
 
-        if (snap.ShaPrint.ProcessRunning && snap.ShaPrint.ListeningEndpoints.Count == 0)
+        if (snap.ShaPrint.ProcessRunning)
         {
-            findings.Add(new Finding
+            if (snap.ShaPrint.ListeningCollectionStatus is ProbeOutcome.Unknown or ProbeOutcome.NotTested)
             {
-                Id = "SHA-003",
-                Title = "ShaPrint running but not listening expected ports",
-                Severity = Severity.High,
-                Status = DiagnosticStatus.Fail,
-                Evidence = "No listening endpoints observed for 48631/48632/48633",
-                Confidence = 0.8,
-                Category = "ShaPrint",
-                PossibleCauses = new[] { "Sharing not started", "Port conflict", "Failed bind" },
-                RecommendedActions = new[] { "Inspect ShaPrint logs if accessible", "Check port ownership" },
-                VerificationMethod = "netstat/Get-NetTCPConnection"
-            });
+                findings.Add(new Finding
+                {
+                    Id = "SHA-003U",
+                    Title = "ShaPrint listening endpoints UNKNOWN",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = "ListeningCollectionStatus=" + snap.ShaPrint.ListeningCollectionStatus,
+                    Confidence = 0.7,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "Collector rights", "Get-NetTCPConnection failed" },
+                    RecommendedActions = new[] { "Do not conclude not-listening", "Re-run elevated" },
+                    VerificationMethod = "Get-NetTCPConnection / Get-NetUDPEndpoint"
+                });
+            }
+            else if (snap.ShaPrint.ListeningCollectionStatus == ProbeOutcome.Pass && snap.ShaPrint.ListeningEndpoints.Count == 0)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SHA-003",
+                    Title = "ShaPrint running but not listening expected ports",
+                    Severity = Severity.High,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = "Collected listen table empty for 48631/48632/48633",
+                    Confidence = 0.8,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "Sharing not started", "Port conflict", "Failed bind" },
+                    RecommendedActions = new[] { "Inspect ShaPrint logs if accessible", "Check port ownership — do not open firewall without listener" },
+                    VerificationMethod = "netstat/Get-NetTCPConnection"
+                });
+            }
+            else if (snap.Role == MachineRole.Server
+                     && snap.ShaPrint.ListeningEndpoints.Any(e =>
+                         e.Contains("48631", StringComparison.OrdinalIgnoreCase)
+                         && !e.Contains("FOREIGN", StringComparison.OrdinalIgnoreCase)))
+            {
+                // Listener present on server — owned inbound rule is eligible (user consent still required).
+                findings.Add(new Finding
+                {
+                    Id = "SHA-004",
+                    Title = "ShaPrint IPPS listener present — owned firewall rule may be required",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Warning,
+                    Evidence = "TCP 48631 listening; offer MyPC.PrintDoctor.ShaPrint48631.Private (Private/LocalSubnet only)",
+                    Confidence = 0.7,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "Inbound firewall filter", "Profile mismatch" },
+                    RecommendedActions = new[] { "Create owned rule only after confirming Private LAN", "Never open TCP 48632 to LAN" },
+                    RepairId = "FW-OWNED-SHA48631",
+                    RepairOwner = RepairOwnerRole.LocalServer,
+                    VerificationMethod = "Rule re-read + client TCP 48631 (still not IPPS PASS)"
+                });
+            }
+
+            if (snap.Role == MachineRole.Server
+                && snap.ShaPrint.ListeningEndpoints.Any(e =>
+                    e.Contains("48633", StringComparison.OrdinalIgnoreCase)
+                    && !e.Contains("FOREIGN", StringComparison.OrdinalIgnoreCase)))
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SHA-005",
+                    Title = "ShaPrint discovery UDP 48633 listening — owned firewall rule may be required",
+                    Severity = Severity.Medium,
+                    Status = DiagnosticStatus.Warning,
+                    Evidence = "UDP 48633 listening; offer MyPC.PrintDoctor.ShaPrint48633.Private (Private/LocalSubnet only). Never expose TCP 48632 to LAN.",
+                    Confidence = 0.65,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "Inbound UDP filter", "Profile mismatch" },
+                    RecommendedActions = new[] { "Create owned UDP discovery rule only on Private/LocalSubnet" },
+                    RepairId = "FW-OWNED-SHA48633",
+                    RepairOwner = RepairOwnerRole.LocalServer,
+                    VerificationMethod = "Rule re-read + discovery probe (not IPPS PASS)"
+                });
+            }
         }
 
-        if (snap.ShaPrintConnectivity is { ServerEndpointReachable: false } && !string.IsNullOrWhiteSpace(snap.TargetHost))
+        if (snap.ShaPrintConnectivity is { } conn && !string.IsNullOrWhiteSpace(snap.TargetHost))
         {
-            findings.Add(new Finding
+            if (conn.ServerEndpoint == ProbeOutcome.Fail)
             {
-                Id = "SHA-001",
-                Title = "ShaPrint endpoint unavailable",
-                Severity = Severity.High,
-                Status = DiagnosticStatus.Fail,
-                Evidence = snap.ShaPrintConnectivity.Detail ?? $"TCP {ShaPrintPorts.ServerTcp} unreachable",
-                Confidence = 0.75,
-                Category = "ShaPrint",
-                PossibleCauses = new[] { "Process down", "Not listening", "Port blocked", "No route" },
-                RecommendedActions = new[] { "Separate process/listen/firewall/route causes", "Avoid blaming ShaPrint without evidence" },
-                VerificationMethod = "Local listen check + remote TCP probe"
-            });
+                findings.Add(new Finding
+                {
+                    Id = "SHA-001",
+                    Title = "ShaPrint endpoint unavailable",
+                    Severity = Severity.High,
+                    Status = DiagnosticStatus.Fail,
+                    Evidence = conn.Detail ?? $"TCP {ShaPrintPorts.ServerTcp} unreachable",
+                    Confidence = 0.75,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "Process down", "Not listening", "Port blocked", "No route" },
+                    RecommendedActions = new[] { "Separate process/listen/firewall/route causes", "Avoid blaming ShaPrint without evidence", "SERVER_ACTION_REQUIRED for inbound firewall" },
+                    RepairOwner = RepairOwnerRole.ServerActionRequired,
+                    VerificationMethod = "Local listen check + remote TCP probe"
+                });
+            }
+            else if (conn.ServerEndpoint is ProbeOutcome.NotTested or ProbeOutcome.Unknown)
+            {
+                findings.Add(new Finding
+                {
+                    Id = "SHA-001U",
+                    Title = "ShaPrint endpoint not tested / UNKNOWN",
+                    Severity = Severity.Low,
+                    Status = DiagnosticStatus.Unknown,
+                    Evidence = conn.Detail ?? conn.ServerEndpoint.ToString(),
+                    Confidence = 0.8,
+                    Category = "ShaPrint",
+                    PossibleCauses = new[] { "No target", "Collector failure" },
+                    RecommendedActions = new[] { "Provide server IP and re-scan" },
+                    VerificationMethod = "TCP 48631 probe"
+                });
+            }
         }
     }
 

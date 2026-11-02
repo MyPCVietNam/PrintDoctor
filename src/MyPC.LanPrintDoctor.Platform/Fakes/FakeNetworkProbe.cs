@@ -1,3 +1,4 @@
+using MyPC.LanPrintDoctor.Abstractions.Diagnostics;
 using MyPC.LanPrintDoctor.Abstractions.Network;
 using MyPC.LanPrintDoctor.Core.Engine;
 
@@ -23,12 +24,12 @@ public sealed class FakeNetworkProbe : INetworkProbe
 
     public Task<ConnectivityProbeResult> PingAsync(string target, CancellationToken ct = default)
     {
-        var ok = IcmpResults.TryGetValue(target, out var v) ? v : false;
+        var ok = IcmpResults.TryGetValue(target, out var v) && v;
         return Task.FromResult(new ConnectivityProbeResult
         {
             Target = target,
             Protocol = ProbeProtocol.Icmp,
-            Success = ok,
+            Outcome = ok ? ProbeOutcome.Pass : ProbeOutcome.Fail,
             Detail = ok ? "echo reply" : "timed out"
         });
     }
@@ -41,7 +42,7 @@ public sealed class FakeNetworkProbe : INetworkProbe
             Target = host,
             Port = port,
             Protocol = ProbeProtocol.Tcp,
-            Success = ok,
+            Outcome = ok ? ProbeOutcome.Pass : ProbeOutcome.Fail,
             Detail = ok ? "connected" : "refused/filtered"
         });
     }
@@ -53,7 +54,7 @@ public sealed class FakeNetworkProbe : INetworkProbe
         {
             Target = hostname,
             Protocol = ProbeProtocol.Tcp,
-            Success = ok,
+            Outcome = ok ? ProbeOutcome.Pass : ProbeOutcome.Fail,
             Detail = ok ? "resolved" : "NXDOMAIN"
         });
     }

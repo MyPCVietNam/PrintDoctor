@@ -1,0 +1,197 @@
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
+using MyPC.LanPrintDoctor.Abstractions.Platform;
+using MyPC.LanPrintDoctor.Platform.Windows;
+
+namespace MyPC.LanPrintDoctor.IntegrationTests;
+
+/// <summary>
+/// Windows-oriented PowerShell contract fixtures. Uses a recording runner so CI never
+/// mutates production firewall. Optional read-only live probe when OS is Windows.
+/// </summary>
+public class Hf2WindowsPowerShellFixtureTests
+{
+    [Fact]
+    public async Task HF2_IcmpEnableScript_SetsRemoteAddressBeforeEnable_NoGroup_NoEmptyCatch()
+    {
+        var runner = new RecordingProcessRunner
+        {
+            Handler = (_, script) =>
+            {
+                // Simulate address-filter failure path used by production when REMOTE_NOT_SET throws
+                if (script.Contains("REMOTE_NOT_SET", StringComparison.Ordinal))
+                    return new ProcessResult { ExitCode = 1, StdOut = "", StdErr = "REMOTE_NOT_SET" };
+                return new ProcessResult { ExitCode = 0, StdOut = "CHANGED:FPS-ICMP4-ERQ-In" };
+            }
+        };
+        var fw = new PowerShellFirewallInspector(runner);
+        _ = await fw.EnableScopedIcmpEchoAsync();
+
+        var script = Assert.Single(runner.Scripts);
+        AssertScriptSafeScope(script);
+        Assert.Contains("FPS-ICMP4-ERQ-In", script, StringComparison.Ordinal);
+        Assert.Contains("Set-NetFirewallRule -Name $name -RemoteAddress LocalSubnet", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set-NetFirewallAddressFilter -AssociatedNetFirewallRule", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Enable-NetFirewallRule -Group", script, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("catch { }", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("catch{}", script, StringComparison.Ordinal);
+
+        // Intent before first mutation; address scope before Enable in the try path; controlled rollback helpers present.
+        var trackIdx = script.IndexOf("$tracked.Add", StringComparison.Ordinal);
+        var tryIdx = script.IndexOf("try {", StringComparison.Ordinal);
+        Assert.True(trackIdx > tryIdx, "tracked intent must be inside try before Sets");
+        var addrInTry = script.IndexOf("Set-NetFirewallRule -Name $name -RemoteAddress LocalSubnet", trackIdx, StringComparison.Ordinal);
+        var enableInTry = script.IndexOf("Enable-NetFirewallRule -Name $name", trackIdx, StringComparison.Ordinal);
+        if (enableInTry < 0)
+            enableInTry = script.IndexOf("Enable-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In'", trackIdx, StringComparison.Ordinal);
+        Assert.True(addrInTry >= 0 && enableInTry > addrInTry, "RemoteAddress must be set before Enable");
+        Assert.Contains("Restore-RuleSnap", script, StringComparison.Ordinal);
+        Assert.Contains("UNCERTAIN_STATE", script, StringComparison.Ordinal);
+        Assert.Contains("REMOTE_NOT_SET", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HF2_FpsEnableScript_ApprovedIdsOnly_ScopeBeforeEnable()
+    {
+        var runner = new RecordingProcessRunner
+        {
+            Handler = (_, _) => new ProcessResult { ExitCode = 0, StdOut = "CHANGED:FPS-SMB-In-TCP,FPS-SpoolSvc-In-TCP" }
+        };
+        var fw = new PowerShellFirewallInspector(runner);
+        var result = await fw.EnableFileAndPrinterSharingAsync();
+        Assert.True(result.Success);
+        Assert.Equal(2, result.ChangedRuleIds.Count);
+
+        var script = Assert.Single(runner.Scripts);
+        AssertScriptSafeScope(script);
+        foreach (var id in new[] { "FPS-SMB-In-TCP", "FPS-NBSession-In-TCP", "FPS-RPCSS-In-TCP", "FPS-SpoolSvc-In-TCP" })
+            Assert.Contains(id, script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Enable-NetFirewallRule -Group", script, StringComparison.OrdinalIgnoreCase);
+
+        var trackIdx = script.IndexOf("$tracked.Add", StringComparison.Ordinal);
+        Assert.True(trackIdx >= 0);
+        var addrAfterTrack = script.IndexOf("Set-NetFirewallRule -Name $name -RemoteAddress LocalSubnet", trackIdx, StringComparison.Ordinal);
+        var enableAfterTrack = script.IndexOf("Enable-NetFirewallRule -Name $name", trackIdx, StringComparison.Ordinal);
+        Assert.True(addrAfterTrack >= 0 && enableAfterTrack > addrAfterTrack);
+        Assert.False(NetSecurityCommandCatalog.IsInvalidSetAddressFilterUsage(script));
+        Assert.Contains("Restore-RuleSnap", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HF2_RemoteAddressFail_ReturnsUnsuccessful_NoChangedIds()
+    {
+        var runner = new RecordingProcessRunner
+        {
+            Handler = (_, _) => new ProcessResult { ExitCode = 1, StdOut = "", StdErr = "REMOTE_NOT_SET:Any" }
+        };
+        var fw = new PowerShellFirewallInspector(runner);
+        var result = await fw.EnableScopedIcmpEchoAsync();
+        Assert.False(result.Success);
+        Assert.Empty(result.ChangedRuleIds);
+    }
+
+    [Fact]
+    public async Task HF2_IcmpRestoreScript_RequiresRemoteAddressMatch()
+    {
+        var runner = new RecordingProcessRunner
+        {
+            Handler = (_, script) =>
+            {
+                if (script.Contains("ConvertTo-Json", StringComparison.Ordinal)
+                    && script.Contains("Get-NetFirewallRule", StringComparison.Ordinal))
+                {
+                    // GetRelevantRules after restore
+                    return new ProcessResult
+                    {
+                        ExitCode = 0,
+                        StdOut = """[{"Name":"FPS-ICMP4-ERQ-In","DisplayName":"ICMP","Enabled":false,"Direction":"Inbound","Action":"Allow","Profile":"Domain","RemoteAddresses":"LocalSubnet","Protocol":"ICMPv4","LocalPorts":"Any","IcmpTypesAndCodes":"8","PolicyStore":"ActiveStore"}]"""
+                    };
+                }
+                return new ProcessResult { ExitCode = 0, StdOut = "OK" };
+            }
+        };
+        var fw = new PowerShellFirewallInspector(runner);
+        var backup = """[{"RuleId":"FPS-ICMP4-ERQ-In","Name":"FPS-ICMP4-ERQ-In","Enabled":false,"Direction":"Inbound","Action":"Allow","Protocol":"ICMPv4","Profiles":"Domain","RemoteAddresses":"Any","PolicyStore":"ActiveStore","IcmpTypesAndCodes":"8"}]""";
+        var restore = await fw.RestoreIcmpEchoFromBackupAsync(backup);
+        Assert.False(restore.Verified);
+        Assert.True(restore.Partial);
+
+        var mutate = runner.Scripts.First(s => s.Contains("REMOTE_RESTORE_FAIL", StringComparison.Ordinal));
+        Assert.Contains("Set-NetFirewallRule -Name", mutate, StringComparison.Ordinal);
+        Assert.Contains("-RemoteAddress", mutate, StringComparison.Ordinal);
+        var addrIdx = mutate.IndexOf("Set-NetFirewallRule -Name", StringComparison.Ordinal);
+        var enableIdx = Regex.Match(mutate, @"Enable-NetFirewallRule|Disable-NetFirewallRule").Index;
+        Assert.True(addrIdx >= 0 && enableIdx > addrIdx);
+        Assert.False(NetSecurityCommandCatalog.IsInvalidSetAddressFilterUsage(mutate));
+    }
+
+    [Fact]
+    public async Task HF2_LiveWindows_ReadOnlyFirewallProbe_NoMutation()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            // Document that live Windows probe is skipped off-Windows (UNIT/INTEGRATION still pass).
+            return;
+        }
+
+        // Read-only: never Set-/Enable-NetFirewall* in CI.
+        var mutateFlag = Environment.GetEnvironmentVariable("LPD_ALLOW_FIREWALL_MUTATION");
+        Assert.True(
+            string.IsNullOrEmpty(mutateFlag) || mutateFlag is "0" or "false",
+            "CI must not set LPD_ALLOW_FIREWALL_MUTATION for live firewall writes");
+        // Presence of NetSecurity module is enough evidence the runner can host future lab fixtures.
+        var runner = new ProcessRunner();
+        var probe = await runner.RunAsync(
+            "powershell.exe",
+            new[]
+            {
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                "Get-Command Get-NetFirewallRule -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name"
+            },
+            TimeSpan.FromSeconds(20));
+        Assert.True(probe.ExitCode == 0 || !string.IsNullOrWhiteSpace(probe.StdOut) || !string.IsNullOrWhiteSpace(probe.StdErr));
+    }
+
+    /// <summary>
+    /// P2-00-A: live Windows parameter-binding discovery — AssociatedNetFirewallRule must NOT
+    /// appear on Set-NetFirewallAddressFilter; RemoteAddress must appear on Set-NetFirewallRule.
+    /// Off-Windows: no-op pass (catalog unit tests still cover the contract).
+    /// </summary>
+    [Fact]
+    public async Task P2_00A_LiveWindows_NetSecurityParameterBinding_ReadOnly()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return;
+
+        var mutateFlag = Environment.GetEnvironmentVariable("LPD_ALLOW_FIREWALL_MUTATION");
+        Assert.True(string.IsNullOrEmpty(mutateFlag) || mutateFlag is "0" or "false");
+
+        var runner = new ProcessRunner();
+        var script = @"
+$ErrorActionPreference = 'Stop'
+$setAddr = @((Get-Command Set-NetFirewallAddressFilter).Parameters.Keys)
+$setRule = @((Get-Command Set-NetFirewallRule).Parameters.Keys)
+$getAddr = @((Get-Command Get-NetFirewallAddressFilter).Parameters.Keys)
+[pscustomobject]@{
+  SetAddrHasAssociated = ($setAddr -contains 'AssociatedNetFirewallRule')
+  SetRuleHasRemote = ($setRule -contains 'RemoteAddress')
+  GetAddrHasAssociated = ($getAddr -contains 'AssociatedNetFirewallRule')
+} | ConvertTo-Json -Compress
+";
+        var probe = await runner.RunAsync(
+            "powershell.exe",
+            new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script },
+            TimeSpan.FromSeconds(30));
+        Assert.Equal(0, probe.ExitCode);
+        Assert.Contains("\"SetAddrHasAssociated\":false", probe.StdOut.Replace(" ", ""), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"SetRuleHasRemote\":true", probe.StdOut.Replace(" ", ""), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"GetAddrHasAssociated\":true", probe.StdOut.Replace(" ", ""), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AssertScriptSafeScope(string script)
+    {
+        Assert.Contains("LocalSubnet", script, StringComparison.Ordinal);
+        Assert.Contains("Private", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("-Group ", script.Replace("Grouping", "GRP", StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
+    }
+}

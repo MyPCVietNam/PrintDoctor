@@ -1,0 +1,161 @@
+{
+  "package": "MyPC.PrintDoctor.PreField.Simulation",
+  "package_date": "2026-11-01",
+  "purpose": "88 synthetic test fixtures, Windows 10/11 read-only diagnostic scripts, Windows command compatibility checks",
+  "baseline_commit": "096297248f904ec60467a2522d5dfced8cece1f7",
+  "test_subject": "INDEPENDENT_REFERENCE_MODEL_NOT_PRINTDOCTOR_P2_APP",
+  "test_results": {
+    "single_scenarios_passed": 48,
+    "five_pc_topologies_passed": 12,
+    "repair_scenarios_passed": 28,
+    "diagnostic_random_safety_checks_passed": 5016,
+    "repair_random_safety_checks_passed": 2000,
+    "static_checks_passed": 26
+  },
+  "win10_win11_field": "NOT_RUN",
+  "powershell_runtime": "NOT_RUN",
+  "printdoctor_p2_engine_integration": "NOT_RUN",
+  "includes_mutating_repair_scripts": false,
+  "files": [
+    {
+      "relative_path": "CURSOR-P2-SIMULATION-PROMPT.md",
+      "size_bytes": 6585,
+      "sha256": "6adb23f4d123830454502cee56c8a8e2be93ce3d805c8be60ce554ff8fcd60e4"
+    },
+    {
+      "relative_path": "FIELD-PLAYBOOK-20261102.md",
+      "size_bytes": 3710,
+      "sha256": "a08e683df89d916cac46ee94e0e681e20740def11ccf8cd90394bc9f3786f18b"
+    },
+    {
+      "relative_path": "README.md",
+      "size_bytes": 1980,
+      "sha256": "5a59709970cde927e26b2baa4657bd8b18e8065d5862107ad3e0e2018fa75dfb"
+    },
+    {
+      "relative_path": "SOURCES.md",
+      "size_bytes": 2024,
+      "sha256": "6ce228aa9bb63d9e62fdacdd5b9090547167ddc72bdcf6bde26db6ce352c3099"
+    },
+    {
+      "relative_path": "reports/REPAIR-SIMULATION-RESULTS.json",
+      "size_bytes": 8170,
+      "sha256": "6f6d182fafe88cc6fa068d4fffa3b9a4649ee4ee37cc0632f334d577a7b102f8"
+    },
+    {
+      "relative_path": "reports/SIMULATION-RESULTS.json",
+      "size_bytes": 23480,
+      "sha256": "7bee7b62c3efacac115c9491e5e9fb43d5e01b48162128e5baa270ea891b76ff"
+    },
+    {
+      "relative_path": "reports/STATIC-VALIDATION-RESULTS.json",
+      "size_bytes": 2827,
+      "sha256": "e3dfb3e8546d3de06029426bb6fee1767101ac8a8c22b5cd818a725845f952a4"
+    },
+    {
+      "relative_path": "reports/TEST-REPORT.md",
+      "size_bytes": 3165,
+      "sha256": "12955d7c4666f19acf93334e1cc36712f1ede99504779cb860d9b7c0968d7a78"
+    },
+    {
+      "relative_path": "simulation/ALL_60_SCENARIO_MATRIX.csv",
+      "size_bytes": 10500,
+      "sha256": "aa6de8a96f5d37f471c3d78ed22ec91aa35f5e3c5cc65854fc5eb876013ddd93"
+    },
+    {
+      "relative_path": "simulation/ALL_88_TEST_CASES.csv",
+      "size_bytes": 13744,
+      "sha256": "c994b6a881aa4d870d225a7cbe838ece69a090b3412f149bde7dfc28d890b11b"
+    },
+    {
+      "relative_path": "simulation/SCENARIO_MATRIX.csv",
+      "size_bytes": 8095,
+      "sha256": "3441daa546daec918b05712a3cdfb07869da1cd37283fa3e02ea509308fa1a19"
+    },
+    {
+      "relative_path": "simulation/build_cases.py",
+      "size_bytes": 11692,
+      "sha256": "5923a56cfe9a4fa4242422da60f080eefa7483da6cceaf0c54c51ba6d1187155"
+    },
+    {
+      "relative_path": "simulation/build_office_cases.py",
+      "size_bytes": 2557,
+      "sha256": "48e0fd91437f82f0afec6e56abaec737c249da6734274211105d7a004e386457"
+    },
+    {
+      "relative_path": "simulation/office_5pc_scenarios.json",
+      "size_bytes": 12494,
+      "sha256": "ced805abb5d4652247575d4f00efc9b2e806d2f9a567f07ff7d036da9717ca70"
+    },
+    {
+      "relative_path": "simulation/office_correlation.py",
+      "size_bytes": 2014,
+      "sha256": "0739887fcfc4e04176c5fdd28ae693400431b981a8aa5b22b3c3e3a3d22e4d7c"
+    },
+    {
+      "relative_path": "simulation/oracle.py",
+      "size_bytes": 8096,
+      "sha256": "ab8dc05a96b1d530a26a51545074747710a13fd50db815a47be4ab4c66d3dcad"
+    },
+    {
+      "relative_path": "simulation/repair_scenarios.json",
+      "size_bytes": 10029,
+      "sha256": "d21010d42567b526eac6b1e77a68696429cae221f52c6b313b33b1809bc4225a"
+    },
+    {
+      "relative_path": "simulation/repair_transaction_model.py",
+      "size_bytes": 5099,
+      "sha256": "b4c2b95d0595aa627a93339d4418dc218afc55c7f667500e811795ec9a21bcf2"
+    },
+    {
+      "relative_path": "simulation/repair_transaction_tests.py",
+      "size_bytes": 4605,
+      "sha256": "d96a5f8aecac0bf93ed4acb39175ed11a36c1bd481e6ec712c8910ef7f9c5de2"
+    },
+    {
+      "relative_path": "simulation/run_simulations.py",
+      "size_bytes": 4650,
+      "sha256": "122bf72af02702bf4bb8ac672b70fece956acbdd3ed96346d9f3f2f2f103e477"
+    },
+    {
+      "relative_path": "simulation/scenarios.json",
+      "size_bytes": 27565,
+      "sha256": "3eb43db1dca37d47e82567185f591fea88cbf85f634a4b6b086cd0d763c6a066"
+    },
+    {
+      "relative_path": "simulation/static_validate.py",
+      "size_bytes": 2237,
+      "sha256": "53e9a43f6ee2637f62f827ad905f7fd254a3728e5138c220c284adaaeaedc61d"
+    },
+    {
+      "relative_path": "windows/01-Server-ReadOnly.cmd",
+      "size_bytes": 125,
+      "sha256": "e9143c99f8fc55d0f37f9667af8985ec53d03aea850928e554ec0e705fe7c774"
+    },
+    {
+      "relative_path": "windows/02-Client-ReadOnly.cmd",
+      "size_bytes": 125,
+      "sha256": "0ce9398ddf4c4f80b28f7247a6e4ec40415fd141f40d816444cdc6780c18f230"
+    },
+    {
+      "relative_path": "windows/03-Server-DeepReadOnly.cmd",
+      "size_bytes": 131,
+      "sha256": "f28b55f2ff7274e0d4e709aae382064aa990ffe044eb1ccc863abe1f168e3737"
+    },
+    {
+      "relative_path": "windows/04-Windows-API-Check.cmd",
+      "size_bytes": 118,
+      "sha256": "202a1cf5647fe4566994e2eab118dd9a060192ce6c34f7f7cc19fd9cd93ccac5"
+    },
+    {
+      "relative_path": "windows/Field-ReadOnly.ps1",
+      "size_bytes": 9753,
+      "sha256": "025f218dbc2923bf59396340616e3a22abff364228c2b81f5582d5f1f9da6ccd"
+    },
+    {
+      "relative_path": "windows/Windows-API-Contract.ps1",
+      "size_bytes": 3759,
+      "sha256": "2e24f911090957a5741c07b505f497151652ce0bc8ac1be6dd948c1f262ae895"
+    }
+  ]
+}

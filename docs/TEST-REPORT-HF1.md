@@ -1,0 +1,19 @@
+# Test report — v1.2.2-HF1
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| UNIT | PASS | 154 tests |
+| INTEGRATION | PASS | 10 tests |
+| SIMULATION diagnostic | PASS/BLOCKED | 21 PASS + 27 BLOCKED (witness/unmappable preserved) — 0 FAIL |
+| SIMULATION office 5PC | PASS/BLOCKED | 8 PASS + 4 BLOCKED — 0 false PASS; OFFICE-03 requires CMP-003 |
+| FAULT injection 28 | PASS | executor provenance; claim_28_of_28_real_executor when all paths executor* |
+| WINDOWS API lab | NOT_RUN | Requires physical Windows SKU |
+| WINDOWS CI | PASS | https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41330251439 @ 66338a8 |
+| FIELD Win10/11 | NOT_RUN | Required for FIELD_READY |
+
+EXE SHA256: 4e110fe5bebea3aa1294d6661a5bee3a23e87a720ced6018c796fa15b456392a  
+RELEASE ZIP SHA256: 94584bdc1cb2fa84c9b61cd45e0be19aa4431dd07a726ff442fce436818906fa
+
+**FIELD_READY:** false
+
+Negative controls: ICMP correct PASS; unrelated SMB FAIL; wrong owner FAIL; no-evidence unmappable not PASS; AUTO_APPLY language FAIL; "do not automatically" not false FAIL.

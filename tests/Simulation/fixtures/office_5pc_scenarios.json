@@ -1,0 +1,549 @@
+[
+  {
+    "id": "OFFICE-01",
+    "title": "Server NIC down, 4 clients fail",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "DOWN"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      }
+    ],
+    "expected": "SERVER_PHYSICAL_LINK"
+  },
+  {
+    "id": "OFFICE-02",
+    "title": "Server asleep, four clients fail",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "UP",
+      "power": "SLEEP"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      }
+    ],
+    "expected": "SERVER_POWER"
+  },
+  {
+    "id": "OFFICE-03",
+    "title": "One client sees MAC different from actual server",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "UP",
+      "mac": "00:aa:bb:cc:dd:ee"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES",
+        "observed_mac": "00:aa:bb:cc:dd:ef"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      }
+    ],
+    "expected": "POSSIBLE_IP_CONFLICT_NEEDS_CORROBORATION"
+  },
+  {
+    "id": "OFFICE-04",
+    "title": "Client packets never reach server",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "UP",
+      "gateway": "PASS",
+      "received_probe": "NO"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      }
+    ],
+    "expected": "UPSTREAM_NETWORK_PATH"
+  },
+  {
+    "id": "OFFICE-05",
+    "title": "All fail ping but TCP port works",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "UP",
+      "gateway": "PASS"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "PASS",
+        "tcp48631": "PASS",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "PASS",
+        "tcp48631": "PASS",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "PASS",
+        "tcp48631": "PASS",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "PASS",
+        "tcp48631": "PASS",
+        "probe_sent": "YES"
+      }
+    ],
+    "expected": "HOST_REACHABLE_ICMP_SEPARATE"
+  },
+  {
+    "id": "OFFICE-06",
+    "title": "WFP confirms drop on server for all clients",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "UP",
+      "gateway": "PASS",
+      "wfp_drop": "YES"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      }
+    ],
+    "expected": "SERVER_WFP_FIREWALL_CONFIRMED"
+  },
+  {
+    "id": "OFFICE-07",
+    "title": "All ping and TCP fail but no WFP/packet evidence",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "UP",
+      "gateway": "PASS"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      }
+    ],
+    "expected": "NEED_PACKET_PATH_OR_FIREWALL_EVIDENCE"
+  },
+  {
+    "id": "OFFICE-08",
+    "title": "One client fails, three work",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "UP",
+      "gateway": "PASS"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "PASS",
+        "tcp48631": "PASS",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "PASS",
+        "tcp48631": "PASS",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "PASS",
+        "tcp48631": "PASS",
+        "probe_sent": "YES"
+      }
+    ],
+    "expected": "CLIENT_SPECIFIC_FAULT"
+  },
+  {
+    "id": "OFFICE-09",
+    "title": "All SMB ports open, printer RPC fails",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "UP",
+      "gateway": "PASS"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "PASS",
+        "tcp48631": "PASS",
+        "probe_sent": "YES",
+        "printer_rpc": "FAIL"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "PASS",
+        "tcp48631": "PASS",
+        "probe_sent": "YES",
+        "printer_rpc": "FAIL"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "PASS",
+        "tcp48631": "PASS",
+        "probe_sent": "YES",
+        "printer_rpc": "FAIL"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "PASS",
+        "tcp48631": "PASS",
+        "probe_sent": "YES",
+        "printer_rpc": "FAIL"
+      }
+    ],
+    "expected": "PRINT_RPC_APPLICATION_LAYER"
+  },
+  {
+    "id": "OFFICE-10",
+    "title": "ShaPrint fails to start after reboot despite functional network",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "UP",
+      "gateway": "PASS",
+      "before_reboot_sha": "RUNNING",
+      "after_reboot_sha": "STOPPED"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "PASS",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "PASS",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "PASS",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.50",
+        "icmp": "PASS",
+        "tcp445": "PASS",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      }
+    ],
+    "expected": "SHAPRINT_STARTUP_RECURRENCE"
+  },
+  {
+    "id": "OFFICE-11",
+    "title": "Mixed server target report is invalid",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "UP"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.60",
+        "icmp": "FAIL",
+        "tcp445": "FAIL",
+        "tcp48631": "FAIL",
+        "probe_sent": "YES"
+      }
+    ],
+    "expected": "INVALID_OR_INCONSISTENT_REPORTS"
+  },
+  {
+    "id": "OFFICE-12",
+    "title": "All clients unknown, server link up",
+    "origin": "SYNTHETIC_NOT_FIELD_LOG",
+    "server": {
+      "ip": "192.168.10.50",
+      "nic": "UP",
+      "gateway": "UNKNOWN"
+    },
+    "clients": [
+      {
+        "name": "PC1",
+        "target": "192.168.10.50",
+        "icmp": "UNKNOWN",
+        "tcp445": "UNKNOWN",
+        "tcp48631": "UNKNOWN",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC2",
+        "target": "192.168.10.50",
+        "icmp": "UNKNOWN",
+        "tcp445": "UNKNOWN",
+        "tcp48631": "UNKNOWN",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC3",
+        "target": "192.168.10.50",
+        "icmp": "UNKNOWN",
+        "tcp445": "UNKNOWN",
+        "tcp48631": "UNKNOWN",
+        "probe_sent": "YES"
+      },
+      {
+        "name": "PC4",
+        "target": "192.168.10.50",
+        "icmp": "UNKNOWN",
+        "tcp445": "UNKNOWN",
+        "tcp48631": "UNKNOWN",
+        "probe_sent": "YES"
+      }
+    ],
+    "expected": "INSUFFICIENT_EVIDENCE"
+  }
+]

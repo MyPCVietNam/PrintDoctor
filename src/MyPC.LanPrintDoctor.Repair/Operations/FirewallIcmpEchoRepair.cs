@@ -10,27 +10,22 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
 {
     private readonly IFirewallInspector _firewall;
     private readonly IElevationService _elevation;
-    private readonly Func<CancellationToken, Task> _apply;
-    private readonly Func<RepairBackup, CancellationToken, Task> _rollback;
-    private readonly Func<CancellationToken, Task<bool>> _verify;
     private string? _evidence;
+    private List<string> _changedRuleIds = new();
 
-    public FirewallIcmpEchoRepair(
-        IFirewallInspector firewall,
-        IElevationService elevation,
-        Func<CancellationToken, Task>? apply = null,
-        Func<RepairBackup, CancellationToken, Task>? rollback = null,
-        Func<CancellationToken, Task<bool>>? verify = null)
+    public FirewallIcmpEchoRepair(IFirewallInspector firewall, IElevationService elevation)
     {
         _firewall = firewall;
         _elevation = elevation;
-        _apply = apply ?? (_ => Task.CompletedTask);
-        _rollback = rollback ?? ((_, _) => Task.CompletedTask);
-        _verify = verify ?? (_ => Task.FromResult(true));
     }
 
     public string OperationId => "FW-ICMP-ECHO";
     public string Title => "Enable scoped ICMP Echo Request rule";
+    public bool IsImplemented => true;
+    public bool SupportsRollback => true;
+    public RepairOwnerRole OwnerRole => RepairOwnerRole.LocalServer;
+    public RepairTargetMachine TargetMachine => RepairTargetMachine.Local;
+    public IReadOnlyList<string> LastChangedRuleIds => _changedRuleIds;
 
     public Task<RepairPrerequisiteResult> CheckPrerequisitesAsync(CancellationToken ct = default)
     {
@@ -54,9 +49,15 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
         {
             OperationId = OperationId,
             Title = Title,
-            Description = "Enable or create ICMPv4 Echo Request allow rule scoped to LocalSubnet for Private profile. Does not disable firewall.",
-            Changes = new[] { "Ensure File and Printer Sharing (Echo Request - ICMPv4-In) enabled for Private/LocalSubnet" },
-            Risks = new[] { "Allows ping from local subnet on Private profile" },
+            Description = "Enable FPS-ICMP4-ERQ-In only after Profile=Private and RemoteAddress=LocalSubnet succeed. Enable is aborted if scope set fails.",
+            Changes = new[]
+            {
+                "Set Profile=Private + RemoteAddress=LocalSubnet (Stop on failure)",
+                "Enable only after scope re-read confirms LocalSubnet",
+                "Changed-rule list recorded for Verify (not any matching rule)",
+                "Skip GPO-managed rules"
+            },
+            Risks = new[] { "Allows ICMP echo from local subnet on Private profile only" },
             Reversible = true
         });
 
@@ -64,14 +65,73 @@ public sealed class FirewallIcmpEchoRepair : IRepairOperation
         => Task.FromResult(new RepairBackup
         {
             BackupId = $"bak-{OperationId}-{Guid.NewGuid():N}",
-            Path = "memory",
+            Path = "journal",
             CreatedAt = DateTimeOffset.UtcNow,
-            PayloadJson = _evidence
+            PayloadJson = _evidence ?? "[]"
         });
 
-    public Task ApplyAsync(CancellationToken ct = default) => _apply(ct);
+    public async Task ApplyAsync(CancellationToken ct = default)
+    {
+        var result = await _firewall.EnableScopedIcmpEchoAsync(ct);
+        // Always capture ids actually mutated — including mid-failure partial lists.
+        _changedRuleIds = result.ChangedRuleIds.ToList();
+        if (!result.Success)
+            throw new InvalidOperationException(
+                (result.Detail ?? "Scoped ICMP enable failed (Enable not applied without scope).")
+                + ( _changedRuleIds.Count > 0 ? " PARTIAL_CHANGED:" + string.Join(',', _changedRuleIds) : ""));
+        if (_changedRuleIds.Count == 0)
+            throw new InvalidOperationException("No changed rule ids recorded — refusing success.");
+    }
 
-    public Task<bool> VerifyAsync(CancellationToken ct = default) => _verify(ct);
+    public async Task<bool> VerifyAsync(CancellationToken ct = default)
+    {
+        if (_changedRuleIds.Count == 0) return false;
+        var rules = await _firewall.GetRelevantRulesAsync(ct);
+        // ALL changed rules must satisfy scoped ICMP — one bad ⇒ fail
+        return FirewallRuleScope.AllChangedSatisfy(rules, _changedRuleIds, FirewallRuleScope.IsScopedIcmpEcho);
+    }
 
-    public Task RollbackAsync(RepairBackup backup, CancellationToken ct = default) => _rollback(backup, ct);
+    public async Task<RollbackResult> RollbackAsync(RepairBackup backup, CancellationToken ct = default)
+    {
+        // Only restore rules belonging to this transaction's changed-id list.
+        var payload = FilterBackupToChanged(backup.PayloadJson ?? "[]", _changedRuleIds);
+        if (_changedRuleIds.Count == 0)
+        {
+            return new RollbackResult
+            {
+                Attempted = false,
+                Succeeded = false,
+                Verified = false,
+                Message = "No changed rule ids in transaction — refusing to touch unrelated firewall rules."
+            };
+        }
+
+        var restored = await _firewall.RestoreIcmpEchoFromBackupAsync(payload, ct);
+        return new RollbackResult
+        {
+            Attempted = true,
+            Succeeded = restored.Succeeded,
+            Verified = restored.Verified && !restored.Partial,
+            Partial = restored.Partial,
+            Message = restored.Message ?? (restored.Verified ? "verified" : "not verified")
+        };
+    }
+
+    internal static string FilterBackupToChanged(string backupJson, IReadOnlyList<string> changedIds)
+    {
+        if (changedIds.Count == 0) return "[]";
+        try
+        {
+            var all = JsonSerializer.Deserialize<List<FirewallRuleInfo>>(backupJson) ?? new();
+            var filtered = all.Where(r =>
+                changedIds.Any(id => string.Equals(id, r.RuleId ?? r.Name, StringComparison.OrdinalIgnoreCase))).ToList();
+            return JsonSerializer.Serialize(filtered);
+        }
+        catch
+        {
+            return "[]";
+        }
+    }
+
+    public static bool IsEnabledScopedIcmp(FirewallRuleInfo r) => FirewallRuleScope.IsScopedIcmpEcho(r);
 }
