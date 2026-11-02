@@ -6,7 +6,7 @@
 | Assembly | 1.2.2.0 |
 | Branch | cursor/p21-simulation-repair-hardening-e81e |
 | Audited baseline | 6ed5d1c2e7853baf720fbdd74311bbf38fed85ec |
-| Implementation HEAD | PENDING_PUSH |
+| Implementation HEAD | 6960737bb40eee405a5ddd4cbf622a9a7d836a94 |
 | Windows CI | PENDING |
 | EXE SHA256 | PENDING (Windows CI) |
 | RELEASE ZIP SHA256 | PENDING (Windows CI) |
