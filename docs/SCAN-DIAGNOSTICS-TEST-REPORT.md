@@ -6,7 +6,7 @@
 | Audited baseline | `6ed5d1c2e7853baf720fbdd74311bbf38fed85ec` |
 | Linux agent unit | **170 passed** |
 | Linux agent integration | **10 passed** |
-| Windows CI | **PASS** https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41379102614 (170 unit / 10 integration) |
+| Windows CI | **PASS** https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41379102614 (implementation) · tip https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41402639596 |
 
 ## Gate H — UI-001…UI-015
 
@@ -46,4 +46,4 @@ Pre-existing simulation + repair unit/integration suites remain green (Gate I �
 ## Honest NOT_RUN gates
 - **UI_VISUAL_LAB_NOT_RUN** — no real Windows desktop on this agent (1100×720–1920×1080 @ 100–150% scaling not visually verified)
 - **FIELD_VALIDATION_NOT_RUN** — two-PC field pilot not executed
-- **WINDOWS_CI** — PASS on tip `2262a03` run 41379102614 (authoritative EXE/RELEASE hashes recorded)
+- **WINDOWS_CI** — PASS on implementation `2262a03` run 41379102614 (authoritative EXE/RELEASE hashes); tip `4356e2c` run 41402639596 also PASS

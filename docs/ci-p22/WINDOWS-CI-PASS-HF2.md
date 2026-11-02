@@ -8,9 +8,9 @@
 | Baseline | `6ed5d1c2e7853baf720fbdd74311bbf38fed85ec` |
 | Implementation commit | `6960737bb40eee405a5ddd4cbf622a9a7d836a94` |
 | Docs tip (hashes recorded) | `2262a032b5ec8b940bbf8b395c0e8eef2c30cc58` |
-| Branch tip | `86f24de1fc0a9934be5748a9589e6c0e7d9568df` |
+| Branch tip | `4356e2c01ce17986abb2fb0cd217e138b27eefcf` |
 | Authoritative CI (implementation) | https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41379102614 |
-| Tip docs CI | https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41379488510 |
+| Tip docs CI | https://github.com/MyPCVietNam/PrintDoctor/actions/runs/41402639596 |
 | Unit tests | 170 passed |
 | Integration tests | 10 passed |
 | EXE SHA256 | `566dc399e8009114fa94256c9fbbbabcbb058d24874706851d6486d4002a252f` |
